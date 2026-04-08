@@ -1,5 +1,6 @@
 import type { Project, SchemaInfo } from "../lib/types";
 import { colorForLabel } from "../lib/colors";
+import { shortProjectName } from "../lib/projectName";
 
 interface ProjectCardProps {
   project: Project;
@@ -19,7 +20,9 @@ export function ProjectCard({ project, schema, onSelect }: ProjectCardProps) {
     <div className="border border-white/10 rounded-lg p-4 hover:border-white/20 transition-colors">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <h3 className="text-white font-medium">{project.name}</h3>
+          <h3 className="text-white font-medium" title={project.name}>
+            {shortProjectName(project.name)}
+          </h3>
           <p className="text-white/40 text-xs font-mono mt-0.5 truncate max-w-[300px]">
             {project.root_path}
           </p>

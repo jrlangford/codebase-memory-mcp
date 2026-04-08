@@ -2,7 +2,9 @@
  * layout3d.c — Anchor-based 3D graph layout with local optimization.
  *
  * Strategy: structured first, then refined.
- *   1. Place nodes on a ring by directory cluster key (clean, sorted structure)
+ *   1. Place nodes on a ring by cluster key:
+ *      - DIR mode: first 3 directory components (organizational structure)
+ *      - LOUVAIN mode: community detection on call edges (functional modules)
  *   2. Assign z from call depth (entry points at top, callees below)
  *   3. Run GENTLE local optimization: ForceAtlas2 with strong anchor springs
  *      that keep nodes near their initial positions while untangling overlaps
@@ -384,7 +386,8 @@ static int find_node_index(const node_id_entry_t *map, int count, int64_t id) {
 
 cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         cbm_layout_level_t level, const char *center_node,
-                                        int radius, int max_nodes) {
+                                        int radius, int max_nodes,
+                                        cbm_cluster_mode_t cluster_mode) {
     if (!store || !project)
         return NULL;
     if (max_nodes <= 0)
@@ -503,7 +506,43 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         free(lbls);
     }
 
-    /* 5. Seed positions: ring by directory cluster key + z from call depth */
+    /* 4b. Louvain community detection (when requested) */
+    int *louvain_community = NULL;
+    if (cluster_mode == CBM_CLUSTER_LOUVAIN && mapped > 0) {
+        /* Build edge list for Louvain from the already-fetched edges */
+        int64_t *node_ids = malloc((size_t)n * sizeof(int64_t));
+        cbm_louvain_edge_t *lv_edges = malloc((size_t)mapped * sizeof(cbm_louvain_edge_t));
+        if (node_ids && lv_edges) {
+            for (int i = 0; i < n; i++)
+                node_ids[i] = search_out.results[i].node.id;
+            for (int e = 0; e < mapped; e++) {
+                lv_edges[e].src = search_out.results[es[e]].node.id;
+                lv_edges[e].dst = search_out.results[ed[e]].node.id;
+            }
+            cbm_louvain_result_t *lv_out = NULL;
+            int lv_count = 0;
+            if (cbm_louvain(node_ids, n, lv_edges, mapped, &lv_out, &lv_count) == CBM_STORE_OK &&
+                lv_out) {
+                louvain_community = calloc((size_t)n, sizeof(int));
+                if (louvain_community) {
+                    /* Map Louvain results back to node indices */
+                    for (int r = 0; r < lv_count; r++) {
+                        for (int i = 0; i < n; i++) {
+                            if (node_ids[i] == lv_out[r].node_id) {
+                                louvain_community[i] = lv_out[r].community;
+                                break;
+                            }
+                        }
+                    }
+                }
+                free(lv_out);
+            }
+        }
+        free(node_ids);
+        free(lv_edges);
+    }
+
+    /* 5. Seed positions: ring by cluster key + z from call depth */
     body_t *bodies = calloc((size_t)n, sizeof(body_t));
     cbm_layout_result_t *result = calloc(CBM_ALLOC_ONE, sizeof(*result));
     if (!result || !bodies) {
@@ -512,6 +551,7 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         free(es);
         free(ed);
         free(cdepth);
+        free(louvain_community);
         cbm_layout_free(result);
         free_edge_array(all_edges, mapped);
         cbm_store_search_free(&search_out);
@@ -523,24 +563,32 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
 
     for (int i = 0; i < n; i++) {
         const cbm_node_t *sn = &search_out.results[i].node;
-        const char *fp = sn->file_path ? sn->file_path : "";
 
-        /* Cluster key = first 3 dir components */
-        char ck[CBM_SZ_256] = {0};
-        {
-            const char *p = fp;
-            int sl = 0, ki = 0;
-            while (*p && ki < 255) {
-                if (*p == '/') {
-                    sl++;
-                    if (sl >= 3)
-                        break;
+        uint32_t h;
+        if (louvain_community) {
+            /* Louvain mode: hash the community ID for ring placement */
+            char comm_key[32];
+            snprintf(comm_key, sizeof(comm_key), "comm_%d", louvain_community[i]);
+            h = fnv1a(comm_key);
+        } else {
+            /* Directory mode: hash first 3 dir components */
+            const char *fp = sn->file_path ? sn->file_path : "";
+            char ck[CBM_SZ_256] = {0};
+            {
+                const char *p = fp;
+                int sl = 0, ki = 0;
+                while (*p && ki < 255) {
+                    if (*p == '/') {
+                        sl++;
+                        if (sl >= 3)
+                            break;
+                    }
+                    ck[ki++] = *p++;
                 }
-                ck[ki++] = *p++;
             }
+            h = fnv1a(ck);
         }
 
-        uint32_t h = fnv1a(ck);
         float angle = ((float)(h & 0xFFFF) / 65535.0f) * 6.2832f;
         float r = 500.0f + ((float)((h >> 16) & 0xFF) / 255.0f) * 250.0f;
 
@@ -596,6 +644,7 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
     free(es);
     free(ed);
     free(cdepth);
+    free(louvain_community);
     free_edge_array(all_edges, mapped);
     cbm_store_search_free(&search_out);
     return result;

@@ -907,6 +907,13 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
             max_nodes = v;
     }
 
+    char cluster_str[32] = {0};
+    cbm_cluster_mode_t cluster_mode = CBM_CLUSTER_DIR;
+    if (get_query_param(hm->query, "cluster", cluster_str, (int)sizeof(cluster_str))) {
+        if (strcmp(cluster_str, "louvain") == 0)
+            cluster_mode = CBM_CLUSTER_LOUVAIN;
+    }
+
     /* Open a read-only store for this project */
     char db_path[1024];
     db_path_for_project(project, db_path, sizeof(db_path));
@@ -923,7 +930,7 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     cbm_layout_result_t *layout =
-        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes);
+        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes, cluster_mode);
     cbm_store_close(store);
 
     if (!layout) {

@@ -5,15 +5,22 @@ interface UseGraphDataResult {
   data: GraphData | null;
   loading: boolean;
   error: string | null;
-  fetchOverview: (project: string) => void;
+  fetchOverview: (project: string, clusterMode?: ClusterMode) => void;
   fetchDetail: (project: string, centerNode: string) => void;
 }
+
+export type ClusterMode = "dir" | "louvain";
 
 async function fetchLayout(
   project: string,
   maxNodes = 50000,
+  clusterMode: ClusterMode = "dir",
 ): Promise<GraphData> {
-  const params = new URLSearchParams({ project, max_nodes: String(maxNodes) });
+  const params = new URLSearchParams({
+    project,
+    max_nodes: String(maxNodes),
+    cluster: clusterMode,
+  });
   const res = await fetch(`/api/layout?${params}`);
 
   if (!res.ok) {
@@ -29,11 +36,11 @@ export function useGraphData(): UseGraphDataResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchOverview = useCallback(async (project: string) => {
+  const fetchOverview = useCallback(async (project: string, clusterMode: ClusterMode = "dir") => {
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchLayout(project, 50000);
+      const result = await fetchLayout(project, 50000, clusterMode);
       setData(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch layout");

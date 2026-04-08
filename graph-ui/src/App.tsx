@@ -2,6 +2,7 @@ import { useState } from "react";
 import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
+import { shortProjectName } from "./lib/projectName";
 import type { TabId } from "./lib/types";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -47,8 +48,11 @@ export function App() {
         {selectedProject && (
           <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.04] border border-border/30">
             <span className="text-[10px] text-foreground/30 uppercase tracking-wider">Graph</span>
-            <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
-              {selectedProject}
+            <span
+              className="text-[11px] text-primary font-mono truncate max-w-[300px]"
+              title={selectedProject}
+            >
+              {shortProjectName(selectedProject)}
             </span>
             <button
               onClick={() => { setSelectedProject(null); setActiveTab("stats"); }}

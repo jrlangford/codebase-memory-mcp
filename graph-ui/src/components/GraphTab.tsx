@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { useGraphData } from "../hooks/useGraphData";
+import { useGraphData, type ClusterMode } from "../hooks/useGraphData";
 import {
   GraphScene,
   computeCameraTarget,
@@ -36,6 +36,7 @@ export function GraphTab({ project }: GraphTabProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
   const [showLabels, setShowLabels] = useState(true);
+  const [clusterMode, setClusterMode] = useState<ClusterMode>("dir");
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
 
@@ -70,11 +71,11 @@ export function GraphTab({ project }: GraphTabProps) {
 
   useEffect(() => {
     if (project) {
-      fetchOverview(project);
+      fetchOverview(project, clusterMode);
       setHighlightedIds(null);
       setSelectedPath(null);
     }
-  }, [project, fetchOverview]);
+  }, [project, clusterMode, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -250,6 +251,9 @@ export function GraphTab({ project }: GraphTabProps) {
           <p>
             {filteredData.nodes.length.toLocaleString()} nodes /{" "}
             {filteredData.edges.length.toLocaleString()} edges
+            <span className="text-white/20 ml-2">
+              [{clusterMode === "louvain" ? "louvain" : "directory"} clusters]
+            </span>
           </p>
           {data.nodes.length > filteredData.nodes.length && (
             <p className="text-white/25 mt-0.5">
@@ -264,6 +268,29 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
+          {/* Cluster mode toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setClusterMode("dir")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                clusterMode === "dir"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+            >
+              Directory
+            </button>
+            <button
+              onClick={() => setClusterMode("louvain")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                clusterMode === "louvain"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+            >
+              Louvain
+            </button>
+          </div>
           {highlightedIds && (
             <Button
               size="sm"
@@ -285,7 +312,7 @@ export function GraphTab({ project }: GraphTabProps) {
               setSelectedPath(null);
               setSelectedNode(null);
               setCameraTarget(null);
-              fetchOverview(project);
+              fetchOverview(project, clusterMode);
             }}
           >
             Refresh
