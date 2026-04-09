@@ -1840,8 +1840,13 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             } label_buckets[32];
                             int n_label_buckets = 0;
 
-                            /* Collect top members by name (first 5) */
-                            const char *top_members[5] = {0};
+                            /* Collect top members (first 5) with label and path */
+                            struct {
+                                const char *name;
+                                const char *label;
+                                const char *file_path;
+                            } top_members[5];
+                            memset(top_members, 0, sizeof(top_members));
                             int n_top = 0;
 
                             for (int i = 0; i < n; i++) {
@@ -1852,7 +1857,10 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
 
                                 /* Top members */
                                 if (n_top < 5 && nd->name) {
-                                    top_members[n_top++] = nd->name;
+                                    top_members[n_top].name = nd->name;
+                                    top_members[n_top].label = nd->label;
+                                    top_members[n_top].file_path = nd->file_path;
+                                    n_top++;
                                 }
 
                                 /* Directory prefix: first 3 path components */
@@ -1959,7 +1967,17 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             /* Top members */
                             yyjson_mut_val *members = yyjson_mut_arr(doc);
                             for (int m = 0; m < n_top; m++) {
-                                yyjson_mut_arr_add_strcpy(doc, members, top_members[m]);
+                                yyjson_mut_val *mobj = yyjson_mut_obj(doc);
+                                if (top_members[m].name)
+                                    yyjson_mut_obj_add_strcpy(doc, mobj, "name",
+                                                              top_members[m].name);
+                                if (top_members[m].label)
+                                    yyjson_mut_obj_add_strcpy(doc, mobj, "type",
+                                                              top_members[m].label);
+                                if (top_members[m].file_path)
+                                    yyjson_mut_obj_add_strcpy(doc, mobj, "path",
+                                                              top_members[m].file_path);
+                                yyjson_mut_arr_add_val(members, mobj);
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "top_members", members);
 
