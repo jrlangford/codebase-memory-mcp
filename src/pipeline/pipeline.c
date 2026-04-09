@@ -12,7 +12,7 @@
  */
 #include "foundation/constants.h"
 
-enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6, PL_WAL_BUF = 1040 };
+enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 5, PL_WAL_BUF = 1040 };
 #define PL_NSEC_PER_SEC 1000000000LL
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
@@ -470,7 +470,6 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         {cbm_pipeline_pass_calls, "calls", false},
         {cbm_pipeline_pass_usages, "usages", false},
         {cbm_pipeline_pass_semantic, "semantic", false},
-        {cbm_pipeline_pass_mdlinks, "mdlinks", true},
     };
     int rc = 0;
     for (int si = 0; si < PL_SEQ_PASSES && rc == 0; si++) {
@@ -739,6 +738,15 @@ static int run_post_extraction(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     int rc = run_tests_and_history(p, ctx, files, file_count);
     if (rc != 0) {
         return rc;
+    }
+
+    /* Markdown link extraction — runs after all code nodes are in the buffer */
+    if (!check_cancel(p)) {
+        struct timespec t_mdl;
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t_mdl);
+        cbm_pipeline_pass_mdlinks(ctx, files, file_count);
+        cbm_log_info("pass.timing", "pass", "mdlinks", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t_mdl)));
     }
 
     CBM_PROF_START(t_predump);
