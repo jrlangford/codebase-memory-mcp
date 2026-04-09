@@ -1907,11 +1907,19 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             if (size <= 1)
                                 continue;
 
-                            /* Find dominant directory */
-                            int best_dir = 0;
-                            for (int b = 1; b < n_buckets; b++) {
-                                if (dir_buckets[b].count > dir_buckets[best_dir].count)
-                                    best_dir = b;
+                            /* Sort dir buckets by count descending */
+                            for (int i2 = 0; i2 < n_buckets - 1; i2++) {
+                                for (int j2 = i2 + 1; j2 < n_buckets; j2++) {
+                                    if (dir_buckets[j2].count > dir_buckets[i2].count) {
+                                        char tmp_prefix[256];
+                                        int tmp_count = dir_buckets[i2].count;
+                                        memcpy(tmp_prefix, dir_buckets[i2].prefix, 256);
+                                        dir_buckets[i2].count = dir_buckets[j2].count;
+                                        memcpy(dir_buckets[i2].prefix, dir_buckets[j2].prefix, 256);
+                                        dir_buckets[j2].count = tmp_count;
+                                        memcpy(dir_buckets[j2].prefix, tmp_prefix, 256);
+                                    }
+                                }
                             }
 
                             /* Build JSON object for this community */
@@ -1919,11 +1927,24 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             yyjson_mut_obj_add_int(doc, cobj, "id", c);
                             yyjson_mut_obj_add_int(doc, cobj, "size", size);
                             if (n_buckets > 0) {
-                                yyjson_mut_obj_add_strcpy(doc, cobj, "dominant_path",
-                                                          dir_buckets[best_dir].prefix);
                                 yyjson_mut_obj_add_strcpy(doc, cobj, "label",
-                                                          dir_buckets[best_dir].prefix);
+                                                          dir_buckets[0].prefix);
                             }
+
+                            /* Top paths with percentages */
+                            yyjson_mut_val *paths_arr = yyjson_mut_arr(doc);
+                            int top_paths = n_buckets < 5 ? n_buckets : 5;
+                            for (int p = 0; p < top_paths; p++) {
+                                yyjson_mut_val *pobj = yyjson_mut_obj(doc);
+                                yyjson_mut_obj_add_strcpy(doc, pobj, "path",
+                                                          dir_buckets[p].prefix);
+                                yyjson_mut_obj_add_int(doc, pobj, "count",
+                                                       dir_buckets[p].count);
+                                double pct = (double)dir_buckets[p].count / (double)size * 100.0;
+                                yyjson_mut_obj_add_real(doc, pobj, "percent", pct);
+                                yyjson_mut_arr_add_val(paths_arr, pobj);
+                            }
+                            yyjson_mut_obj_add_val(doc, cobj, "paths", paths_arr);
 
                             /* Node types */
                             yyjson_mut_val *ntypes = yyjson_mut_obj(doc);
