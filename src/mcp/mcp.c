@@ -334,8 +334,9 @@ static const tool_def_t TOOLS[] = {
      "\"project\"]}"},
 
     {"get_architecture",
-     "Get high-level architecture overview — packages, services, dependencies, and project "
-     "structure at a glance.",
+     "Get high-level architecture overview — packages, services, dependencies, project "
+     "structure, and functional communities (Louvain clustering on call graph). "
+     "Aspects: structure, dependencies, routes, communities.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"aspects\":{\"type\":"
      "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]}"},
 
@@ -1571,6 +1572,34 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
+/* ── Node ID → index map (for Louvain edge filtering in get_architecture) ── */
+
+typedef struct {
+    int64_t id;
+    int idx;
+} mcp_node_id_entry_t;
+
+static int cmp_mcp_node_id(const void *a, const void *b) {
+    int64_t da = ((const mcp_node_id_entry_t *)a)->id;
+    int64_t db = ((const mcp_node_id_entry_t *)b)->id;
+    return (da > db) - (da < db);
+}
+
+static int mcp_find_node_index(const mcp_node_id_entry_t *map, int count, int64_t id) {
+    int lo = 0;
+    int hi = count - SKIP_ONE;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / PAIR_LEN;
+        if (map[mid].id == id)
+            return map[mid].idx;
+        if (map[mid].id < id)
+            lo = mid + SKIP_ONE;
+        else
+            hi = mid - SKIP_ONE;
+    }
+    return CBM_NOT_FOUND;
+}
+
 /* Check if an aspect is requested (NULL aspects = all, or array contains "all" or the name). */
 static bool aspect_wanted(yyjson_doc *aspects_doc, yyjson_val *aspects_arr, const char *name) {
     if (!aspects_arr) {
@@ -1663,6 +1692,270 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
             yyjson_mut_arr_add_str(doc, pats, schema.rel_patterns[i]);
         }
         yyjson_mut_obj_add_val(doc, root, "relationship_patterns", pats);
+    }
+
+    /* Louvain community detection */
+    if (aspect_wanted(aspects_doc, aspects_arr, "communities")) {
+        /* Fetch all code nodes */
+        cbm_search_params_t sp;
+        memset(&sp, 0, sizeof(sp));
+        sp.project = project;
+        sp.limit = 500000;
+        sp.min_degree = -1;
+        sp.max_degree = -1;
+
+        cbm_search_output_t sout;
+        memset(&sout, 0, sizeof(sout));
+        if (cbm_store_search(store, &sp, &sout) == CBM_STORE_OK && sout.count > 0) {
+            int n = sout.count;
+
+            /* Build node ID array + index map */
+            int64_t *node_ids = malloc((size_t)n * sizeof(int64_t));
+            if (node_ids) {
+                for (int i = 0; i < n; i++)
+                    node_ids[i] = sout.results[i].node.id;
+
+                /* Fetch CALLS edges */
+                cbm_edge_t *call_edges = NULL;
+                int ce_count = 0;
+                cbm_store_find_edges_by_type(store, project, "CALLS", &call_edges, &ce_count);
+
+                /* Build sorted ID map for edge filtering */
+                mcp_node_id_entry_t *id_map = malloc((size_t)n * sizeof(mcp_node_id_entry_t));
+                cbm_louvain_edge_t *lv_edges = NULL;
+                int lv_edge_count = 0;
+
+                if (id_map && ce_count > 0) {
+                    for (int i = 0; i < n; i++) {
+                        id_map[i].id = node_ids[i];
+                        id_map[i].idx = i;
+                    }
+                    qsort(id_map, (size_t)n, sizeof(mcp_node_id_entry_t), cmp_mcp_node_id);
+
+                    lv_edges = malloc((size_t)ce_count * sizeof(cbm_louvain_edge_t));
+                    if (lv_edges) {
+                        for (int e = 0; e < ce_count; e++) {
+                            int si = mcp_find_node_index(id_map, n, call_edges[e].source_id);
+                            int di = mcp_find_node_index(id_map, n, call_edges[e].target_id);
+                            if (si >= 0 && di >= 0) {
+                                lv_edges[lv_edge_count].src = node_ids[si];
+                                lv_edges[lv_edge_count].dst = node_ids[di];
+                                lv_edge_count++;
+                            }
+                        }
+                    }
+                }
+                free(id_map);
+
+                /* Free CALLS edges */
+                for (int e = 0; e < ce_count; e++) {
+                    free((void *)call_edges[e].project);
+                    free((void *)call_edges[e].type);
+                    free((void *)call_edges[e].properties_json);
+                }
+                free(call_edges);
+
+                /* Run Louvain */
+                cbm_louvain_result_t *lv_out = NULL;
+                int lv_count = 0;
+                if (lv_edge_count > 0 && lv_edges &&
+                    cbm_louvain(node_ids, n, lv_edges, lv_edge_count, &lv_out, &lv_count) ==
+                        CBM_STORE_OK &&
+                    lv_out) {
+
+                    /* Map community IDs back to node indices */
+                    int *comm = calloc((size_t)n, sizeof(int));
+                    if (comm) {
+                        for (int r2 = 0; r2 < lv_count; r2++) {
+                            for (int i = 0; i < n; i++) {
+                                if (node_ids[i] == lv_out[r2].node_id) {
+                                    comm[i] = lv_out[r2].community;
+                                    break;
+                                }
+                            }
+                        }
+
+                        /* Find max community ID and count sizes */
+                        int max_comm = 0;
+                        for (int i = 0; i < n; i++) {
+                            if (comm[i] > max_comm)
+                                max_comm = comm[i];
+                        }
+
+                        /* Count size per community, then sort to find top N */
+                        int n_comm = max_comm + 1;
+                        int *comm_sizes = calloc((size_t)n_comm, sizeof(int));
+                        if (comm_sizes) {
+                            for (int i = 0; i < n; i++)
+                                comm_sizes[comm[i]]++;
+
+                            /* Build (size, id) pairs for sorting */
+                            typedef struct {
+                                int size;
+                                int id;
+                            } comm_rank_t;
+                            comm_rank_t *ranks = malloc((size_t)n_comm * sizeof(comm_rank_t));
+                            int n_ranks = 0;
+                            if (ranks) {
+                                for (int c = 0; c < n_comm; c++) {
+                                    if (comm_sizes[c] > 1) {
+                                        ranks[n_ranks].size = comm_sizes[c];
+                                        ranks[n_ranks].id = c;
+                                        n_ranks++;
+                                    }
+                                }
+                                /* Sort descending by size */
+                                for (int i = 0; i < n_ranks - 1; i++) {
+                                    for (int j = i + 1; j < n_ranks; j++) {
+                                        if (ranks[j].size > ranks[i].size) {
+                                            comm_rank_t tmp = ranks[i];
+                                            ranks[i] = ranks[j];
+                                            ranks[j] = tmp;
+                                        }
+                                    }
+                                }
+                            }
+                            free(comm_sizes);
+
+                            /* Cap output at 50 communities */
+                            int output_count = n_ranks < 50 ? n_ranks : 50;
+
+                        /* Build per-community summaries */
+                        yyjson_mut_val *comm_arr = yyjson_mut_arr(doc);
+                        for (int ci = 0; ci < output_count; ci++) {
+                            int c = ranks[ci].id;
+                            /* Count members and collect path frequency */
+                            int size = 0;
+                            #define MAX_DIR_BUCKETS 64
+                            struct {
+                                char prefix[256];
+                                int count;
+                            } dir_buckets[MAX_DIR_BUCKETS];
+                            int n_buckets = 0;
+
+                            /* Track label counts */
+                            struct {
+                                char label[64];
+                                int count;
+                            } label_buckets[32];
+                            int n_label_buckets = 0;
+
+                            /* Collect top members by name (first 5) */
+                            const char *top_members[5] = {0};
+                            int n_top = 0;
+
+                            for (int i = 0; i < n; i++) {
+                                if (comm[i] != c)
+                                    continue;
+                                size++;
+                                const cbm_node_t *nd = &sout.results[i].node;
+
+                                /* Top members */
+                                if (n_top < 5 && nd->name) {
+                                    top_members[n_top++] = nd->name;
+                                }
+
+                                /* Directory prefix: first 3 path components */
+                                if (nd->file_path) {
+                                    char prefix[256] = {0};
+                                    const char *p = nd->file_path;
+                                    int slashes = 0, ki = 0;
+                                    while (*p && ki < 255) {
+                                        if (*p == '/') {
+                                            slashes++;
+                                            if (slashes >= 3)
+                                                break;
+                                        }
+                                        prefix[ki++] = *p++;
+                                    }
+                                    /* Find or insert bucket */
+                                    int found = -1;
+                                    for (int b = 0; b < n_buckets; b++) {
+                                        if (strcmp(dir_buckets[b].prefix, prefix) == 0) {
+                                            found = b;
+                                            break;
+                                        }
+                                    }
+                                    if (found >= 0) {
+                                        dir_buckets[found].count++;
+                                    } else if (n_buckets < MAX_DIR_BUCKETS) {
+                                        strncpy(dir_buckets[n_buckets].prefix, prefix, 255);
+                                        dir_buckets[n_buckets].count = 1;
+                                        n_buckets++;
+                                    }
+                                }
+
+                                /* Label count */
+                                if (nd->label) {
+                                    int found = -1;
+                                    for (int b = 0; b < n_label_buckets; b++) {
+                                        if (strcmp(label_buckets[b].label, nd->label) == 0) {
+                                            found = b;
+                                            break;
+                                        }
+                                    }
+                                    if (found >= 0) {
+                                        label_buckets[found].count++;
+                                    } else if (n_label_buckets < 32) {
+                                        strncpy(label_buckets[n_label_buckets].label, nd->label, 63);
+                                        label_buckets[n_label_buckets].count = 1;
+                                        n_label_buckets++;
+                                    }
+                                }
+                            }
+
+                            if (size <= 1)
+                                continue;
+
+                            /* Find dominant directory */
+                            int best_dir = 0;
+                            for (int b = 1; b < n_buckets; b++) {
+                                if (dir_buckets[b].count > dir_buckets[best_dir].count)
+                                    best_dir = b;
+                            }
+
+                            /* Build JSON object for this community */
+                            yyjson_mut_val *cobj = yyjson_mut_obj(doc);
+                            yyjson_mut_obj_add_int(doc, cobj, "id", c);
+                            yyjson_mut_obj_add_int(doc, cobj, "size", size);
+                            if (n_buckets > 0) {
+                                yyjson_mut_obj_add_strcpy(doc, cobj, "dominant_path",
+                                                          dir_buckets[best_dir].prefix);
+                                yyjson_mut_obj_add_strcpy(doc, cobj, "label",
+                                                          dir_buckets[best_dir].prefix);
+                            }
+
+                            /* Node types */
+                            yyjson_mut_val *ntypes = yyjson_mut_obj(doc);
+                            for (int b = 0; b < n_label_buckets; b++) {
+                                yyjson_mut_val *key = yyjson_mut_strcpy(doc, label_buckets[b].label);
+                                yyjson_mut_val *val = yyjson_mut_int(doc, label_buckets[b].count);
+                                if (key && val)
+                                    yyjson_mut_obj_add(ntypes, key, val);
+                            }
+                            yyjson_mut_obj_add_val(doc, cobj, "node_types", ntypes);
+
+                            /* Top members */
+                            yyjson_mut_val *members = yyjson_mut_arr(doc);
+                            for (int m = 0; m < n_top; m++) {
+                                yyjson_mut_arr_add_strcpy(doc, members, top_members[m]);
+                            }
+                            yyjson_mut_obj_add_val(doc, cobj, "top_members", members);
+
+                            yyjson_mut_arr_add_val(comm_arr, cobj);
+                        }
+                        yyjson_mut_obj_add_val(doc, root, "communities", comm_arr);
+                        free(ranks);
+                        } /* ranks */
+                        free(comm);
+                    }
+                    free(lv_out);
+                }
+                free(lv_edges);
+                free(node_ids);
+            }
+            cbm_store_search_free(&sout);
+        }
     }
 
     char *json = yy_doc_to_str(doc);
