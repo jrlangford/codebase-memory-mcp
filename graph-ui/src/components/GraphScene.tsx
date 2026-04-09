@@ -8,6 +8,7 @@ import { NodeCloud } from "./NodeCloud";
 import { EdgeLines } from "./EdgeLines";
 import { NodeLabels } from "./NodeLabels";
 import { NodeTooltip } from "./NodeTooltip";
+// import { Axes } from "./Axes";
 import type { GraphData, GraphNode } from "../lib/types";
 
 /* ── Camera fly-to animation ────────────────────────────── */
@@ -134,6 +135,8 @@ export function GraphScene({
       {showLabels && <NodeLabels nodes={data.nodes} highlightedIds={highlightedIds} />}
 
       {hovered && <NodeTooltip node={hovered} />}
+
+      {/* <Axes /> */}
 
       <CameraAnimator target={cameraTarget} />
       <IdleAutoRotate controlsRef={controlsRef} />
