@@ -1821,11 +1821,16 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             int output_count = n_ranks < 50 ? n_ranks : 50;
 
                         /* Build per-community summaries */
+                        /* Pre-allocate array for collecting member QNs (reused per community) */
+                        const char **member_qns = calloc((size_t)n, sizeof(const char *));
+                        int n_member_qns = 0;
+
                         yyjson_mut_val *comm_arr = yyjson_mut_arr(doc);
                         for (int ci = 0; ci < output_count; ci++) {
                             int c = ranks[ci].id;
                             /* Count members and collect path frequency */
                             int size = 0;
+                            n_member_qns = 0;
                             #define MAX_DIR_BUCKETS 64
                             struct {
                                 char prefix[256];
@@ -1854,6 +1859,11 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                     continue;
                                 size++;
                                 const cbm_node_t *nd = &sout.results[i].node;
+
+                                /* Collect qualified name for full member list */
+                                if (nd->qualified_name && member_qns) {
+                                    member_qns[n_member_qns++] = nd->qualified_name;
+                                }
 
                                 /* Top members */
                                 if (n_top < 5 && nd->name) {
@@ -1981,9 +1991,29 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "top_members", members);
 
+                            /* Focus: top path percentage */
+                            if (n_buckets > 0 && size > 0) {
+                                double focus =
+                                    (double)dir_buckets[0].count / (double)size * 100.0;
+                                yyjson_mut_obj_add_real(doc, cobj, "focus", focus);
+                            }
+
+                            /* Full member list (qualified names) */
+                            if (member_qns && n_member_qns > 0) {
+                                yyjson_mut_val *qn_arr = yyjson_mut_arr(doc);
+                                for (int m = 0; m < n_member_qns; m++) {
+                                    yyjson_mut_val *qn_val =
+                                        yyjson_mut_strcpy(doc, member_qns[m]);
+                                    if (qn_val)
+                                        yyjson_mut_arr_add_val(qn_arr, qn_val);
+                                }
+                                yyjson_mut_obj_add_val(doc, cobj, "members", qn_arr);
+                            }
+
                             yyjson_mut_arr_add_val(comm_arr, cobj);
                         }
                         yyjson_mut_obj_add_val(doc, root, "communities", comm_arr);
+                        free(member_qns);
                         free(ranks);
                         } /* ranks */
                         free(comm);
