@@ -24,9 +24,9 @@ async function fetchLayout(
   options: LayoutOptions = {},
 ): Promise<GraphData> {
   const {
-    clusterMode = "dir",
+    clusterMode = "louvain",
     colorMode = "stellar",
-    optimize = true,
+    optimize = false,
   } = options;
   const params = new URLSearchParams({
     project,

@@ -908,10 +908,10 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     char cluster_str[32] = {0};
-    cbm_cluster_mode_t cluster_mode = CBM_CLUSTER_DIR;
+    cbm_cluster_mode_t cluster_mode = CBM_CLUSTER_LOUVAIN;
     if (get_query_param(hm->query, "cluster", cluster_str, (int)sizeof(cluster_str))) {
-        if (strcmp(cluster_str, "louvain") == 0)
-            cluster_mode = CBM_CLUSTER_LOUVAIN;
+        if (strcmp(cluster_str, "dir") == 0)
+            cluster_mode = CBM_CLUSTER_DIR;
     }
 
     char color_str[32] = {0};
@@ -922,10 +922,10 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     char optimize_str[32] = {0};
-    bool force_optimize = true;
+    bool force_optimize = false;
     if (get_query_param(hm->query, "optimize", optimize_str, (int)sizeof(optimize_str))) {
-        if (strcmp(optimize_str, "false") == 0 || strcmp(optimize_str, "0") == 0)
-            force_optimize = false;
+        if (strcmp(optimize_str, "true") == 0 || strcmp(optimize_str, "1") == 0)
+            force_optimize = true;
     }
 
     /* Open a read-only store for this project */

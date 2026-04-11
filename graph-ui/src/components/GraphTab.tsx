@@ -40,9 +40,9 @@ export function GraphTab({ project }: GraphTabProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
   const [showLabels, setShowLabels] = useState(true);
-  const [clusterMode, setClusterMode] = useState<ClusterMode>("dir");
+  const [clusterMode, setClusterMode] = useState<ClusterMode>("louvain");
   const [colorMode, setColorMode] = useState<ColorMode>("stellar");
-  const [optimize, setOptimize] = useState<boolean>(true);
+  const [optimize, setOptimize] = useState<boolean>(false);
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
 
