@@ -914,6 +914,20 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
             cluster_mode = CBM_CLUSTER_LOUVAIN;
     }
 
+    char color_str[32] = {0};
+    cbm_color_mode_t color_mode = CBM_COLOR_STELLAR;
+    if (get_query_param(hm->query, "color", color_str, (int)sizeof(color_str))) {
+        if (strcmp(color_str, "louvain") == 0)
+            color_mode = CBM_COLOR_LOUVAIN;
+    }
+
+    char optimize_str[32] = {0};
+    bool force_optimize = true;
+    if (get_query_param(hm->query, "optimize", optimize_str, (int)sizeof(optimize_str))) {
+        if (strcmp(optimize_str, "false") == 0 || strcmp(optimize_str, "0") == 0)
+            force_optimize = false;
+    }
+
     /* Open a read-only store for this project */
     char db_path[1024];
     db_path_for_project(project, db_path, sizeof(db_path));
@@ -930,7 +944,8 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     cbm_layout_result_t *layout =
-        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes, cluster_mode);
+        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes,
+                           cluster_mode, color_mode, force_optimize);
     cbm_store_close(store);
 
     if (!layout) {

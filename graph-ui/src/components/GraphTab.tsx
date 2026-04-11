@@ -1,6 +1,10 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { useGraphData, type ClusterMode } from "../hooks/useGraphData";
+import {
+  useGraphData,
+  type ClusterMode,
+  type ColorMode,
+} from "../hooks/useGraphData";
 import {
   GraphScene,
   computeCameraTarget,
@@ -37,6 +41,8 @@ export function GraphTab({ project }: GraphTabProps) {
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [clusterMode, setClusterMode] = useState<ClusterMode>("dir");
+  const [colorMode, setColorMode] = useState<ColorMode>("stellar");
+  const [optimize, setOptimize] = useState<boolean>(true);
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
 
@@ -71,11 +77,11 @@ export function GraphTab({ project }: GraphTabProps) {
 
   useEffect(() => {
     if (project) {
-      fetchOverview(project, clusterMode);
+      fetchOverview(project, { clusterMode, colorMode, optimize });
       setHighlightedIds(null);
       setSelectedPath(null);
     }
-  }, [project, clusterMode, fetchOverview]);
+  }, [project, clusterMode, colorMode, optimize, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -268,7 +274,7 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
-          {/* Cluster mode toggle */}
+          {/* Cluster mode toggle (layout): Directory vs Louvain */}
           <div className="flex rounded-lg overflow-hidden border border-border/30">
             <button
               onClick={() => setClusterMode("dir")}
@@ -277,8 +283,9 @@ export function GraphTab({ project }: GraphTabProps) {
                   ? "bg-primary/20 text-primary"
                   : "bg-white/[0.03] text-white/40 hover:text-white/60"
               }`}
+              title="Ring layout by directory prefix"
             >
-              Directory
+              Dir
             </button>
             <button
               onClick={() => setClusterMode("louvain")}
@@ -287,8 +294,52 @@ export function GraphTab({ project }: GraphTabProps) {
                   ? "bg-primary/20 text-primary"
                   : "bg-white/[0.03] text-white/40 hover:text-white/60"
               }`}
+              title="Ring layout by Louvain community"
             >
               Louvain
+            </button>
+          </div>
+          {/* Color mode toggle: Stellar (by degree) vs Louvain (by community) */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setColorMode("stellar")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                colorMode === "stellar"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Color by node degree (stellar spectral palette)"
+            >
+              ★ Stellar
+            </button>
+            <button
+              onClick={() => setColorMode("louvain")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                colorMode === "louvain"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Color by Louvain community id"
+            >
+              ◉ Louvain
+            </button>
+          </div>
+          {/* Optimize toggle: run the post-seed local_optimize force pass, or freeze */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setOptimize(!optimize)}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                optimize
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title={
+                optimize
+                  ? "Force pass is ON — click to freeze seeded positions"
+                  : "Force pass is OFF — click to enable gentle force optimization"
+              }
+            >
+              {optimize ? "Force: on" : "Force: off"}
             </button>
           </div>
           {highlightedIds && (
@@ -312,7 +363,7 @@ export function GraphTab({ project }: GraphTabProps) {
               setSelectedPath(null);
               setSelectedNode(null);
               setCameraTarget(null);
-              fetchOverview(project, clusterMode);
+              fetchOverview(project, { clusterMode, colorMode, optimize });
             }}
           >
             Refresh
