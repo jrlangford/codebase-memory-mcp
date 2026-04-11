@@ -1940,14 +1940,20 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                 }
                             }
 
-                            /* Build JSON object for this community */
+                            /* Build JSON object for this community.
+                             *
+                             * Note: an auto-derived `label` field (set from
+                             * the top directory prefix) used to be emitted
+                             * here, but the heuristic was arbitrary and
+                             * misleading — it treated "this community lives
+                             * mostly under foo/bar/" as if it were a semantic
+                             * description. Consumers should look at `paths`,
+                             * `top_members`, `node_types`, and `members` to
+                             * derive a real description of each community.
+                             */
                             yyjson_mut_val *cobj = yyjson_mut_obj(doc);
                             yyjson_mut_obj_add_int(doc, cobj, "id", c);
                             yyjson_mut_obj_add_int(doc, cobj, "size", size);
-                            if (n_buckets > 0) {
-                                yyjson_mut_obj_add_strcpy(doc, cobj, "label",
-                                                          dir_buckets[0].prefix);
-                            }
 
                             /* Top paths with percentages */
                             yyjson_mut_val *paths_arr = yyjson_mut_arr(doc);

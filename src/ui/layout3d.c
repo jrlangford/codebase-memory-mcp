@@ -72,6 +72,54 @@ static uint32_t stellar_color(int degree) {
 /* label-based colors removed — using stellar_color(degree) for graph rendering.
  * Label colors are handled in the frontend (lib/colors.ts) for sidebar/tooltips. */
 
+/* Community color — maps a Louvain community id to a distinct hex color.
+ *
+ * Uses golden-ratio hue spacing so that sequentially-numbered communities
+ * are maximally separated in hue space. Fixed saturation and lightness keep
+ * the palette visually uniform so no community overpowers its neighbours.
+ * Used when cluster_mode == CBM_CLUSTER_LOUVAIN so that the 3D graph
+ * visually matches the community structure the user sees in narratives.
+ */
+static uint32_t community_color(int community_id) {
+    if (community_id < 0)
+        return 0x808080; /* unassigned → neutral gray */
+
+    /* 137.507764° is the golden-ratio complement — each step maximally
+     * separates from the previous one around the hue circle. */
+    float hue = fmodf((float)community_id * 137.507764f, 360.0f);
+    const float s = 0.70f;
+    const float l = 0.58f;
+
+    float c = (1.0f - fabsf(2.0f * l - 1.0f)) * s;
+    float h1 = hue / 60.0f;
+    float x = c * (1.0f - fabsf(fmodf(h1, 2.0f) - 1.0f));
+    float r1, g1, b1;
+    if (h1 < 1.0f) {
+        r1 = c; g1 = x; b1 = 0;
+    } else if (h1 < 2.0f) {
+        r1 = x; g1 = c; b1 = 0;
+    } else if (h1 < 3.0f) {
+        r1 = 0; g1 = c; b1 = x;
+    } else if (h1 < 4.0f) {
+        r1 = 0; g1 = x; b1 = c;
+    } else if (h1 < 5.0f) {
+        r1 = x; g1 = 0; b1 = c;
+    } else {
+        r1 = c; g1 = 0; b1 = x;
+    }
+    float m = l - c / 2.0f;
+    int r = (int)((r1 + m) * 255.0f + 0.5f);
+    int g = (int)((g1 + m) * 255.0f + 0.5f);
+    int b = (int)((b1 + m) * 255.0f + 0.5f);
+    if (r < 0) { r = 0; }
+    if (r > 255) { r = 255; }
+    if (g < 0) { g = 0; }
+    if (g > 255) { g = 255; }
+    if (b < 0) { b = 0; }
+    if (b > 255) { b = 255; }
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
 static float size_for_label(const char *label) {
     if (!label)
         return 4.0f;
@@ -611,7 +659,13 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         result->nodes[i].name = sn->name ? strdup(sn->name) : NULL;
         result->nodes[i].qualified_name = sn->qualified_name ? strdup(sn->qualified_name) : NULL;
         result->nodes[i].file_path = sn->file_path ? strdup(sn->file_path) : NULL;
-        result->nodes[i].color = stellar_color(deg[i]);
+        /* Louvain mode: color by community for visual clarity. Otherwise
+         * fall back to stellar-degree coloring. */
+        if (cluster_mode == CBM_CLUSTER_LOUVAIN && louvain_community) {
+            result->nodes[i].color = community_color(louvain_community[i]);
+        } else {
+            result->nodes[i].color = stellar_color(deg[i]);
+        }
         /* Size: base from label + boost from degree (hubs are bigger stars) */
         float base_size = size_for_label(sn->label);
         float deg_boost = (deg[i] > 5) ? fminf((float)deg[i] * 0.3f, 10.0f) : 0;
