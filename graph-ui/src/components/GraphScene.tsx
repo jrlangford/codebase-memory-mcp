@@ -43,6 +43,24 @@ function CameraAnimator({ target }: { target: CameraTarget | null }) {
   return null;
 }
 
+/* ── Expose camera/controls globally for interactive tuning ── */
+
+function ExposeGlobals({
+  controlsRef,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+}) {
+  const { camera } = useThree();
+  useEffect(() => {
+    (window as unknown as { _camera: THREE.Camera })._camera = camera;
+  }, [camera]);
+  useEffect(() => {
+    (window as unknown as { _controls: OrbitControlsImpl | null })._controls =
+      controlsRef.current;
+  });
+  return null;
+}
+
 /* ── Idle auto-rotation ──────────────────────────────────── */
 
 const IDLE_TIMEOUT_MS = 60_000;
@@ -140,6 +158,7 @@ export function GraphScene({
 
       <CameraAnimator target={cameraTarget} />
       <IdleAutoRotate controlsRef={controlsRef} />
+      <ExposeGlobals controlsRef={controlsRef} />
 
       <EffectComposer>
         <Bloom
