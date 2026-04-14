@@ -335,10 +335,27 @@ static const tool_def_t TOOLS[] = {
 
     {"get_architecture",
      "Get high-level architecture overview — packages, services, dependencies, project "
-     "structure, and functional communities (Louvain clustering on call graph). "
-     "Aspects: structure, dependencies, routes, communities.",
+     "structure. Aspects: structure, dependencies, routes. For community detection, see "
+     "calculate_communities.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"aspects\":{\"type\":"
      "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]}"},
+
+    {"calculate_communities",
+     "Run community detection on the project's call graph. Accepts an optional filter that is "
+     "applied BEFORE the algorithm runs (so communities are computed over the filtered "
+     "subgraph). Use filter.exclude_node_types to drop noise labels like Module, Import, Test, "
+     "Fixture and surface real source-code structure. Returns communities[] (same shape as the "
+     "old get_architecture(communities) aspect) plus filter_applied, total_nodes_before_filter, "
+     "total_nodes_after_filter, and total_edges_considered so the effect of the filter is "
+     "visible in the response. Algorithm defaults to louvain.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"algorithm\":{\"type\":\"string\",\"enum\":[\"louvain\"],\"default\":\"louvain\"},"
+     "\"filter\":{\"type\":\"object\",\"properties\":{"
+     "\"exclude_node_types\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
+     "\"include_node_types\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}"
+     "}},"
+     "\"max_communities\":{\"type\":\"integer\",\"default\":50}"
+     "},\"required\":[\"project\"]}"},
 
     {"search_code",
      "Graph-augmented code search. Finds text patterns via grep, then enriches results with "
@@ -1694,158 +1711,329 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
         yyjson_mut_obj_add_val(doc, root, "relationship_patterns", pats);
     }
 
-    /* Louvain community detection */
-    if (aspect_wanted(aspects_doc, aspects_arr, "communities")) {
-        /* Fetch all code nodes */
-        cbm_search_params_t sp;
-        memset(&sp, 0, sizeof(sp));
-        sp.project = project;
-        sp.limit = 500000;
-        sp.min_degree = -1;
-        sp.max_degree = -1;
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    cbm_store_schema_free(&schema);
+    if (aspects_doc) {
+        yyjson_doc_free(aspects_doc);
+    }
+    free(project);
 
-        cbm_search_output_t sout;
-        memset(&sout, 0, sizeof(sout));
-        if (cbm_store_search(store, &sp, &sout) == CBM_STORE_OK && sout.count > 0) {
-            int n = sout.count;
+    char *result = cbm_mcp_text_result(json, false);
+    free(json);
+    return result;
+}
 
-            /* Build node ID array + index map */
-            int64_t *node_ids = malloc((size_t)n * sizeof(int64_t));
-            if (node_ids) {
-                for (int i = 0; i < n; i++)
-                    node_ids[i] = sout.results[i].node.id;
+/* ── calculate_communities ────────────────────────────────────────
+ *
+ * Runs community detection on the project's call graph. The filter
+ * (exclude_node_types / include_node_types) is applied BEFORE the
+ * algorithm runs, so communities are computed over the filtered
+ * subgraph rather than being filtered after the fact. This matters
+ * because community membership depends on the topology — excluding
+ * Module/Import/Test nodes up front collapses plumbing-driven
+ * "communities" that would otherwise dominate the landscape.
+ *
+ * Only louvain is supported today; the algorithm param is accepted
+ * so callers can pass it forward-compatibly and so future algorithms
+ * (leiden, label propagation) don't require a method rename.
+ */
+static bool str_in_yy_arr(yyjson_val *arr, const char *s) {
+    if (!arr || !s) {
+        return false;
+    }
+    yyjson_arr_iter it;
+    yyjson_arr_iter_init(arr, &it);
+    yyjson_val *v;
+    while ((v = yyjson_arr_iter_next(&it)) != NULL) {
+        const char *sv = yyjson_get_str(v);
+        if (sv && strcmp(sv, s) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
-                /* Fetch CALLS edges */
-                cbm_edge_t *call_edges = NULL;
-                int ce_count = 0;
-                cbm_store_find_edges_by_type(store, project, "CALLS", &call_edges, &ce_count);
+static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    cbm_store_t *store = resolve_store(srv, project);
+    REQUIRE_STORE(store, project);
 
-                /* Build sorted ID map for edge filtering */
-                mcp_node_id_entry_t *id_map = malloc((size_t)n * sizeof(mcp_node_id_entry_t));
-                cbm_louvain_edge_t *lv_edges = NULL;
-                int lv_edge_count = 0;
+    char *not_indexed = verify_project_indexed(store, project);
+    if (not_indexed) {
+        free(project);
+        return not_indexed;
+    }
 
-                if (id_map && ce_count > 0) {
-                    for (int i = 0; i < n; i++) {
-                        id_map[i].id = node_ids[i];
-                        id_map[i].idx = i;
-                    }
-                    qsort(id_map, (size_t)n, sizeof(mcp_node_id_entry_t), cmp_mcp_node_id);
+    /* Parse algorithm (currently only louvain is supported) */
+    char *algorithm = cbm_mcp_get_string_arg(args, "algorithm");
+    if (algorithm && strcmp(algorithm, "louvain") != 0) {
+        char msg[CBM_SZ_256];
+        snprintf(msg, sizeof(msg),
+                 "unsupported algorithm '%s'; only 'louvain' is supported", algorithm);
+        free(algorithm);
+        free(project);
+        return cbm_mcp_text_result(msg, true);
+    }
 
-                    lv_edges = malloc((size_t)ce_count * sizeof(cbm_louvain_edge_t));
-                    if (lv_edges) {
-                        for (int e = 0; e < ce_count; e++) {
-                            int si = mcp_find_node_index(id_map, n, call_edges[e].source_id);
-                            int di = mcp_find_node_index(id_map, n, call_edges[e].target_id);
-                            if (si >= 0 && di >= 0) {
-                                lv_edges[lv_edge_count].src = node_ids[si];
-                                lv_edges[lv_edge_count].dst = node_ids[di];
-                                lv_edge_count++;
-                            }
+    /* Parse filter + max_communities from args (keep the doc alive for the arrays) */
+    yyjson_doc *args_doc = yyjson_read(args, strlen(args), 0);
+    yyjson_val *exclude_arr = NULL;
+    yyjson_val *include_arr = NULL;
+    int max_communities = 50;
+    if (args_doc) {
+        yyjson_val *root_v = yyjson_doc_get_root(args_doc);
+        yyjson_val *fval = yyjson_obj_get(root_v, "filter");
+        if (yyjson_is_obj(fval)) {
+            yyjson_val *ex = yyjson_obj_get(fval, "exclude_node_types");
+            if (yyjson_is_arr(ex)) {
+                exclude_arr = ex;
+            }
+            yyjson_val *inc = yyjson_obj_get(fval, "include_node_types");
+            if (yyjson_is_arr(inc)) {
+                include_arr = inc;
+            }
+        }
+        yyjson_val *mcv = yyjson_obj_get(root_v, "max_communities");
+        if (yyjson_is_int(mcv)) {
+            int v = (int)yyjson_get_int(mcv);
+            if (v > 0) {
+                max_communities = v;
+            }
+        }
+    }
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    if (project) {
+        yyjson_mut_obj_add_str(doc, root, "project", project);
+    }
+    yyjson_mut_obj_add_str(doc, root, "algorithm", "louvain");
+
+    /* Echo filter_applied so the response documents exactly what was dropped. */
+    {
+        yyjson_mut_val *fa = yyjson_mut_obj(doc);
+        yyjson_mut_val *ex_out = yyjson_mut_arr(doc);
+        if (exclude_arr) {
+            yyjson_arr_iter it;
+            yyjson_arr_iter_init(exclude_arr, &it);
+            yyjson_val *v;
+            while ((v = yyjson_arr_iter_next(&it)) != NULL) {
+                const char *s = yyjson_get_str(v);
+                if (s) {
+                    yyjson_mut_arr_add_strcpy(doc, ex_out, s);
+                }
+            }
+        }
+        yyjson_mut_obj_add_val(doc, fa, "exclude_node_types", ex_out);
+
+        yyjson_mut_val *in_out = yyjson_mut_arr(doc);
+        if (include_arr) {
+            yyjson_arr_iter it;
+            yyjson_arr_iter_init(include_arr, &it);
+            yyjson_val *v;
+            while ((v = yyjson_arr_iter_next(&it)) != NULL) {
+                const char *s = yyjson_get_str(v);
+                if (s) {
+                    yyjson_mut_arr_add_strcpy(doc, in_out, s);
+                }
+            }
+        }
+        yyjson_mut_obj_add_val(doc, fa, "include_node_types", in_out);
+        yyjson_mut_obj_add_int(doc, fa, "max_communities", max_communities);
+        yyjson_mut_obj_add_val(doc, root, "filter_applied", fa);
+    }
+
+    int total_nodes_before_filter = cbm_store_count_nodes(store, project);
+    yyjson_mut_obj_add_int(doc, root, "total_nodes_before_filter", total_nodes_before_filter);
+
+    /* Track whether we emitted the communities array. If the Louvain pipeline
+     * bails out early (zero nodes after filter, zero edges, etc.) we still
+     * emit an empty array so the response shape is consistent for consumers. */
+    bool communities_emitted = false;
+
+    /* Fetch all code nodes */
+    cbm_search_params_t sp;
+    memset(&sp, 0, sizeof(sp));
+    sp.project = project;
+    sp.limit = 500000;
+    sp.min_degree = -1;
+    sp.max_degree = -1;
+
+    cbm_search_output_t sout;
+    memset(&sout, 0, sizeof(sout));
+    int total_nodes_after_filter = 0;
+    int total_edges_considered = 0;
+    if (cbm_store_search(store, &sp, &sout) == CBM_STORE_OK && sout.count > 0) {
+        int raw_n = sout.count;
+
+        /* Apply node-type filter: build filtered index into sout.results[].
+         * `keep[i]` is true if sout.results[i] passes the filter.
+         * `filtered_idx[k]` maps the k-th kept node back to its original index. */
+        bool *keep = calloc((size_t)raw_n, sizeof(bool));
+        int *filtered_idx = malloc((size_t)raw_n * sizeof(int));
+        int n = 0;
+        if (keep && filtered_idx) {
+            for (int i = 0; i < raw_n; i++) {
+                const char *lbl = sout.results[i].node.label;
+                /* Filter semantics:
+                 * - if include_arr is set, only keep labels that appear in it
+                 * - then if exclude_arr is set, drop labels that appear in it
+                 * - nodes without a label are kept unless explicitly excluded by an "" entry */
+                bool ok = true;
+                if (include_arr) {
+                    ok = lbl && str_in_yy_arr(include_arr, lbl);
+                }
+                if (ok && exclude_arr && lbl && str_in_yy_arr(exclude_arr, lbl)) {
+                    ok = false;
+                }
+                if (ok) {
+                    keep[i] = true;
+                    filtered_idx[n++] = i;
+                }
+            }
+        }
+        total_nodes_after_filter = n;
+
+        /* Build node ID array for kept nodes only */
+        int64_t *node_ids = (n > 0) ? malloc((size_t)n * sizeof(int64_t)) : NULL;
+        if (node_ids) {
+            for (int k = 0; k < n; k++)
+                node_ids[k] = sout.results[filtered_idx[k]].node.id;
+
+            /* Fetch CALLS edges */
+            cbm_edge_t *call_edges = NULL;
+            int ce_count = 0;
+            cbm_store_find_edges_by_type(store, project, "CALLS", &call_edges, &ce_count);
+
+            /* Build sorted ID map for edge filtering (maps id -> filtered index) */
+            mcp_node_id_entry_t *id_map = malloc((size_t)n * sizeof(mcp_node_id_entry_t));
+            cbm_louvain_edge_t *lv_edges = NULL;
+            int lv_edge_count = 0;
+
+            if (id_map && ce_count > 0) {
+                for (int k = 0; k < n; k++) {
+                    id_map[k].id = node_ids[k];
+                    id_map[k].idx = k;
+                }
+                qsort(id_map, (size_t)n, sizeof(mcp_node_id_entry_t), cmp_mcp_node_id);
+
+                lv_edges = malloc((size_t)ce_count * sizeof(cbm_louvain_edge_t));
+                if (lv_edges) {
+                    for (int e = 0; e < ce_count; e++) {
+                        /* Only keep edges where both endpoints survived the node filter */
+                        int si = mcp_find_node_index(id_map, n, call_edges[e].source_id);
+                        int di = mcp_find_node_index(id_map, n, call_edges[e].target_id);
+                        if (si >= 0 && di >= 0) {
+                            lv_edges[lv_edge_count].src = node_ids[si];
+                            lv_edges[lv_edge_count].dst = node_ids[di];
+                            lv_edge_count++;
                         }
                     }
                 }
-                free(id_map);
+            }
+            free(id_map);
+            total_edges_considered = lv_edge_count;
 
-                /* Free CALLS edges */
-                for (int e = 0; e < ce_count; e++) {
-                    free((void *)call_edges[e].project);
-                    free((void *)call_edges[e].type);
-                    free((void *)call_edges[e].properties_json);
-                }
-                free(call_edges);
+            /* Free CALLS edges */
+            for (int e = 0; e < ce_count; e++) {
+                free((void *)call_edges[e].project);
+                free((void *)call_edges[e].type);
+                free((void *)call_edges[e].properties_json);
+            }
+            free(call_edges);
 
-                /* Run Louvain */
-                cbm_louvain_result_t *lv_out = NULL;
-                int lv_count = 0;
-                if (lv_edge_count > 0 && lv_edges &&
-                    cbm_louvain(node_ids, n, lv_edges, lv_edge_count, &lv_out, &lv_count) ==
-                        CBM_STORE_OK &&
-                    lv_out) {
+            /* Run Louvain */
+            cbm_louvain_result_t *lv_out = NULL;
+            int lv_count = 0;
+            if (lv_edge_count > 0 && lv_edges &&
+                cbm_louvain(node_ids, n, lv_edges, lv_edge_count, &lv_out, &lv_count) ==
+                    CBM_STORE_OK &&
+                lv_out) {
 
-                    /* Map community IDs back to node indices */
-                    int *comm = calloc((size_t)n, sizeof(int));
-                    if (comm) {
-                        for (int r2 = 0; r2 < lv_count; r2++) {
-                            for (int i = 0; i < n; i++) {
-                                if (node_ids[i] == lv_out[r2].node_id) {
-                                    comm[i] = lv_out[r2].community;
-                                    break;
+                /* Map community IDs back to filtered indices */
+                int *comm = calloc((size_t)n, sizeof(int));
+                if (comm) {
+                    for (int r2 = 0; r2 < lv_count; r2++) {
+                        for (int k = 0; k < n; k++) {
+                            if (node_ids[k] == lv_out[r2].node_id) {
+                                comm[k] = lv_out[r2].community;
+                                break;
+                            }
+                        }
+                    }
+
+                    /* Find max community ID and count sizes */
+                    int max_comm = 0;
+                    for (int k = 0; k < n; k++) {
+                        if (comm[k] > max_comm)
+                            max_comm = comm[k];
+                    }
+
+                    /* Count size per community, then sort to find top N */
+                    int n_comm = max_comm + 1;
+                    int *comm_sizes = calloc((size_t)n_comm, sizeof(int));
+                    if (comm_sizes) {
+                        for (int k = 0; k < n; k++)
+                            comm_sizes[comm[k]]++;
+
+                        /* Build (size, id) pairs for sorting */
+                        typedef struct {
+                            int size;
+                            int id;
+                        } comm_rank_t;
+                        comm_rank_t *ranks = malloc((size_t)n_comm * sizeof(comm_rank_t));
+                        int n_ranks = 0;
+                        if (ranks) {
+                            for (int c = 0; c < n_comm; c++) {
+                                if (comm_sizes[c] > 1) {
+                                    ranks[n_ranks].size = comm_sizes[c];
+                                    ranks[n_ranks].id = c;
+                                    n_ranks++;
+                                }
+                            }
+                            /* Sort descending by size */
+                            for (int i = 0; i < n_ranks - 1; i++) {
+                                for (int j = i + 1; j < n_ranks; j++) {
+                                    if (ranks[j].size > ranks[i].size) {
+                                        comm_rank_t tmp = ranks[i];
+                                        ranks[i] = ranks[j];
+                                        ranks[j] = tmp;
+                                    }
                                 }
                             }
                         }
+                        free(comm_sizes);
 
-                        /* Find max community ID and count sizes */
-                        int max_comm = 0;
-                        for (int i = 0; i < n; i++) {
-                            if (comm[i] > max_comm)
-                                max_comm = comm[i];
-                        }
+                        int output_count = n_ranks < max_communities ? n_ranks : max_communities;
 
-                        /* Count size per community, then sort to find top N */
-                        int n_comm = max_comm + 1;
-                        int *comm_sizes = calloc((size_t)n_comm, sizeof(int));
-                        if (comm_sizes) {
-                            for (int i = 0; i < n; i++)
-                                comm_sizes[comm[i]]++;
-
-                            /* Build (size, id) pairs for sorting */
-                            typedef struct {
-                                int size;
-                                int id;
-                            } comm_rank_t;
-                            comm_rank_t *ranks = malloc((size_t)n_comm * sizeof(comm_rank_t));
-                            int n_ranks = 0;
-                            if (ranks) {
-                                for (int c = 0; c < n_comm; c++) {
-                                    if (comm_sizes[c] > 1) {
-                                        ranks[n_ranks].size = comm_sizes[c];
-                                        ranks[n_ranks].id = c;
-                                        n_ranks++;
-                                    }
-                                }
-                                /* Sort descending by size */
-                                for (int i = 0; i < n_ranks - 1; i++) {
-                                    for (int j = i + 1; j < n_ranks; j++) {
-                                        if (ranks[j].size > ranks[i].size) {
-                                            comm_rank_t tmp = ranks[i];
-                                            ranks[i] = ranks[j];
-                                            ranks[j] = tmp;
-                                        }
-                                    }
-                                }
-                            }
-                            free(comm_sizes);
-
-                            /* Cap output at 50 communities */
-                            int output_count = n_ranks < 50 ? n_ranks : 50;
-
-                        /* Build per-community summaries */
                         /* Pre-allocate array for collecting member QNs (reused per community) */
                         const char **member_qns = calloc((size_t)n, sizeof(const char *));
                         int n_member_qns = 0;
 
                         yyjson_mut_val *comm_arr = yyjson_mut_arr(doc);
+                        if (ranks) {
                         for (int ci = 0; ci < output_count; ci++) {
                             int c = ranks[ci].id;
-                            /* Count members and collect path frequency */
                             int size = 0;
                             n_member_qns = 0;
+                            #ifndef MAX_DIR_BUCKETS
                             #define MAX_DIR_BUCKETS 64
+                            #endif
                             struct {
                                 char prefix[256];
                                 int count;
                             } dir_buckets[MAX_DIR_BUCKETS];
                             int n_buckets = 0;
 
-                            /* Track label counts */
                             struct {
                                 char label[64];
                                 int count;
                             } label_buckets[32];
                             int n_label_buckets = 0;
 
-                            /* Collect top members (first 5) with label and path */
                             struct {
                                 const char *name;
                                 const char *label;
@@ -1854,18 +2042,16 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             memset(top_members, 0, sizeof(top_members));
                             int n_top = 0;
 
-                            for (int i = 0; i < n; i++) {
-                                if (comm[i] != c)
+                            for (int k = 0; k < n; k++) {
+                                if (comm[k] != c)
                                     continue;
                                 size++;
-                                const cbm_node_t *nd = &sout.results[i].node;
+                                const cbm_node_t *nd = &sout.results[filtered_idx[k]].node;
 
-                                /* Collect qualified name for full member list */
                                 if (nd->qualified_name && member_qns) {
                                     member_qns[n_member_qns++] = nd->qualified_name;
                                 }
 
-                                /* Top members */
                                 if (n_top < 5 && nd->name) {
                                     top_members[n_top].name = nd->name;
                                     top_members[n_top].label = nd->label;
@@ -1873,7 +2059,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                     n_top++;
                                 }
 
-                                /* Directory prefix: first 3 path components */
                                 if (nd->file_path) {
                                     char prefix[256] = {0};
                                     const char *p = nd->file_path;
@@ -1886,7 +2071,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                         }
                                         prefix[ki++] = *p++;
                                     }
-                                    /* Find or insert bucket */
                                     int found = -1;
                                     for (int b = 0; b < n_buckets; b++) {
                                         if (strcmp(dir_buckets[b].prefix, prefix) == 0) {
@@ -1903,7 +2087,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                     }
                                 }
 
-                                /* Label count */
                                 if (nd->label) {
                                     int found = -1;
                                     for (int b = 0; b < n_label_buckets; b++) {
@@ -1940,22 +2123,10 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                                 }
                             }
 
-                            /* Build JSON object for this community.
-                             *
-                             * Note: an auto-derived `label` field (set from
-                             * the top directory prefix) used to be emitted
-                             * here, but the heuristic was arbitrary and
-                             * misleading — it treated "this community lives
-                             * mostly under foo/bar/" as if it were a semantic
-                             * description. Consumers should look at `paths`,
-                             * `top_members`, `node_types`, and `members` to
-                             * derive a real description of each community.
-                             */
                             yyjson_mut_val *cobj = yyjson_mut_obj(doc);
                             yyjson_mut_obj_add_int(doc, cobj, "id", c);
                             yyjson_mut_obj_add_int(doc, cobj, "size", size);
 
-                            /* Top paths with percentages */
                             yyjson_mut_val *paths_arr = yyjson_mut_arr(doc);
                             int top_paths = n_buckets < 5 ? n_buckets : 5;
                             for (int p = 0; p < top_paths; p++) {
@@ -1970,7 +2141,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "paths", paths_arr);
 
-                            /* Node types */
                             yyjson_mut_val *ntypes = yyjson_mut_obj(doc);
                             for (int b = 0; b < n_label_buckets; b++) {
                                 yyjson_mut_val *key = yyjson_mut_strcpy(doc, label_buckets[b].label);
@@ -1980,7 +2150,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "node_types", ntypes);
 
-                            /* Top members */
                             yyjson_mut_val *members = yyjson_mut_arr(doc);
                             for (int m = 0; m < n_top; m++) {
                                 yyjson_mut_val *mobj = yyjson_mut_obj(doc);
@@ -1997,14 +2166,12 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "top_members", members);
 
-                            /* Focus: top path percentage */
                             if (n_buckets > 0 && size > 0) {
                                 double focus =
                                     (double)dir_buckets[0].count / (double)size * 100.0;
                                 yyjson_mut_obj_add_real(doc, cobj, "focus", focus);
                             }
 
-                            /* Full member list (qualified names) */
                             if (member_qns && n_member_qns > 0) {
                                 yyjson_mut_val *qn_arr = yyjson_mut_arr(doc);
                                 for (int m = 0; m < n_member_qns; m++) {
@@ -2018,27 +2185,40 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
 
                             yyjson_mut_arr_add_val(comm_arr, cobj);
                         }
+                        }
                         yyjson_mut_obj_add_val(doc, root, "communities", comm_arr);
+                        communities_emitted = true;
                         free(member_qns);
                         free(ranks);
-                        } /* ranks */
                         free(comm);
                     }
-                    free(lv_out);
                 }
-                free(lv_edges);
-                free(node_ids);
+                free(lv_out);
             }
-            cbm_store_search_free(&sout);
+            free(lv_edges);
+            free(node_ids);
         }
+        free(keep);
+        free(filtered_idx);
+        cbm_store_search_free(&sout);
+    }
+
+    yyjson_mut_obj_add_int(doc, root, "total_nodes_after_filter", total_nodes_after_filter);
+    yyjson_mut_obj_add_int(doc, root, "total_edges_considered", total_edges_considered);
+
+    if (!communities_emitted) {
+        /* Louvain didn't run (no nodes, no edges, or an intermediate allocation
+         * failure). Emit an empty array so the response shape stays consistent. */
+        yyjson_mut_val *empty_arr = yyjson_mut_arr(doc);
+        yyjson_mut_obj_add_val(doc, root, "communities", empty_arr);
     }
 
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
-    cbm_store_schema_free(&schema);
-    if (aspects_doc) {
-        yyjson_doc_free(aspects_doc);
+    if (args_doc) {
+        yyjson_doc_free(args_doc);
     }
+    free(algorithm);
     free(project);
 
     char *result = cbm_mcp_text_result(json, false);
@@ -3731,6 +3911,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "get_architecture") == 0) {
         return handle_get_architecture(srv, args_json);
+    }
+    if (strcmp(tool_name, "calculate_communities") == 0) {
+        return handle_calculate_communities(srv, args_json);
     }
 
     /* Pipeline-dependent tools */
