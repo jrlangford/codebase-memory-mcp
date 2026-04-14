@@ -68,13 +68,16 @@ typedef enum {
  * cluster_mode: how to group nodes for ring placement
  * color_mode: how to assign node colors (stellar-by-degree or Louvain community)
  * force_optimize: if false, skip the post-seed local_optimize() force pass so
- *                 nodes stay on their ring-seeded positions */
+ *                 nodes stay on their ring-seeded positions
+ * exclude_labels_csv: comma-separated node labels to drop before layout
+ *                    (e.g. "Module,File" for runtime lens), NULL/"" disables */
 cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         cbm_layout_level_t level, const char *center_node,
                                         int radius, int max_nodes,
                                         cbm_cluster_mode_t cluster_mode,
                                         cbm_color_mode_t color_mode,
-                                        bool force_optimize);
+                                        bool force_optimize,
+                                        const char *exclude_labels_csv);
 
 /* Free a layout result. */
 void cbm_layout_free(cbm_layout_result_t *result);

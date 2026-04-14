@@ -4,6 +4,7 @@ import {
   useGraphData,
   type ClusterMode,
   type ColorMode,
+  type GraphMode,
 } from "../hooks/useGraphData";
 import {
   GraphScene,
@@ -43,6 +44,7 @@ export function GraphTab({ project }: GraphTabProps) {
   const [clusterMode, setClusterMode] = useState<ClusterMode>("louvain");
   const [colorMode, setColorMode] = useState<ColorMode>("stellar");
   const [optimize, setOptimize] = useState<boolean>(false);
+  const [graphMode, setGraphMode] = useState<GraphMode>("raw");
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
 
@@ -77,11 +79,11 @@ export function GraphTab({ project }: GraphTabProps) {
 
   useEffect(() => {
     if (project) {
-      fetchOverview(project, { clusterMode, colorMode, optimize });
+      fetchOverview(project, { clusterMode, colorMode, optimize, graphMode });
       setHighlightedIds(null);
       setSelectedPath(null);
     }
-  }, [project, clusterMode, colorMode, optimize, fetchOverview]);
+  }, [project, clusterMode, colorMode, optimize, graphMode, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -274,6 +276,31 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
+          {/* Graph mode toggle: Raw (all nodes) vs Runtime (excludes Module/File) */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setGraphMode("raw")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                graphMode === "raw"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Full call graph — no filtering"
+            >
+              Raw
+            </button>
+            <button
+              onClick={() => setGraphMode("runtime")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                graphMode === "runtime"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Runtime lens — excludes Module and File nodes before clustering"
+            >
+              Runtime
+            </button>
+          </div>
           {/* Cluster mode toggle (layout): Directory vs Louvain */}
           <div className="flex rounded-lg overflow-hidden border border-border/30">
             <button
@@ -363,7 +390,7 @@ export function GraphTab({ project }: GraphTabProps) {
               setSelectedPath(null);
               setSelectedNode(null);
               setCameraTarget(null);
-              fetchOverview(project, { clusterMode, colorMode, optimize });
+              fetchOverview(project, { clusterMode, colorMode, optimize, graphMode });
             }}
           >
             Refresh

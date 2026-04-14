@@ -3,11 +3,21 @@ import type { GraphData } from "../lib/types";
 
 export type ClusterMode = "dir" | "louvain";
 export type ColorMode = "stellar" | "louvain";
+export type GraphMode = "raw" | "runtime";
+
+/* Node labels dropped under each graph mode. "raw" keeps everything;
+ * "runtime" drops Module+File scaffolding so the graph represents
+ * functions, methods, classes, routes, and their CALLS edges. */
+const EXCLUDE_BY_MODE: Record<GraphMode, string> = {
+  raw: "",
+  runtime: "Module,File",
+};
 
 export interface LayoutOptions {
   clusterMode?: ClusterMode;
   colorMode?: ColorMode;
   optimize?: boolean;
+  graphMode?: GraphMode;
 }
 
 interface UseGraphDataResult {
@@ -27,6 +37,7 @@ async function fetchLayout(
     clusterMode = "louvain",
     colorMode = "stellar",
     optimize = false,
+    graphMode = "raw",
   } = options;
   const params = new URLSearchParams({
     project,
@@ -35,6 +46,10 @@ async function fetchLayout(
     color: colorMode,
     optimize: optimize ? "true" : "false",
   });
+  const exclude = EXCLUDE_BY_MODE[graphMode];
+  if (exclude) {
+    params.set("exclude_node_types", exclude);
+  }
   const res = await fetch(`/api/layout?${params}`);
 
   if (!res.ok) {

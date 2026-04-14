@@ -5,15 +5,15 @@
 #include "ui/embedded_assets.h"
 #include <string.h>
 
-extern const unsigned char _binary_assets_index_Dpo0pZXh_js_start[];
-extern const unsigned char _binary_assets_index_Dpo0pZXh_js_end[];
+extern const unsigned char _binary_assets_index_B03t2Ld__js_start[];
+extern const unsigned char _binary_assets_index_B03t2Ld__js_end[];
 extern const unsigned char _binary_assets_index_DSvW0gsN_css_start[];
 extern const unsigned char _binary_assets_index_DSvW0gsN_css_end[];
 extern const unsigned char _binary_index_html_start[];
 extern const unsigned char _binary_index_html_end[];
 
 cbm_embedded_file_t CBM_EMBEDDED_FILES[] = {
-    {"/assets/index-Dpo0pZXh.js", _binary_assets_index_Dpo0pZXh_js_start, 0, "application/javascript"},
+    {"/assets/index-B03t2Ld-.js", _binary_assets_index_B03t2Ld__js_start, 0, "application/javascript"},
     {"/assets/index-DSvW0gsN.css", _binary_assets_index_DSvW0gsN_css_start, 0, "text/css"},
     {"/index.html", _binary_index_html_start, 0, "text/html"},
 };
@@ -21,7 +21,7 @@ const int CBM_EMBEDDED_FILE_COUNT = 3;
 
 static void __attribute__((constructor)) init_embedded_sizes(void) {
     cbm_embedded_file_t *files = CBM_EMBEDDED_FILES;
-    files[0].size = (unsigned int)(_binary_assets_index_Dpo0pZXh_js_end - _binary_assets_index_Dpo0pZXh_js_start);
+    files[0].size = (unsigned int)(_binary_assets_index_B03t2Ld__js_end - _binary_assets_index_B03t2Ld__js_start);
     files[1].size = (unsigned int)(_binary_assets_index_DSvW0gsN_css_end - _binary_assets_index_DSvW0gsN_css_start);
     files[2].size = (unsigned int)(_binary_index_html_end - _binary_index_html_start);
 }

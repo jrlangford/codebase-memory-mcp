@@ -432,12 +432,35 @@ static int find_node_index(const node_id_entry_t *map, int count, int64_t id) {
 
 /* ── Public API ───────────────────────────────────────────────── */
 
+/* Check whether `label` matches any comma-separated entry in `csv`.
+ * csv may be NULL or empty — both return false (no match). */
+static bool label_in_csv(const char *label, const char *csv) {
+    if (!label || !csv || !*csv)
+        return false;
+    size_t ll = strlen(label);
+    const char *p = csv;
+    while (*p) {
+        while (*p == ' ' || *p == ',')
+            p++;
+        const char *start = p;
+        while (*p && *p != ',')
+            p++;
+        size_t tl = (size_t)(p - start);
+        while (tl > 0 && start[tl - 1] == ' ')
+            tl--;
+        if (tl == ll && strncmp(start, label, ll) == 0)
+            return true;
+    }
+    return false;
+}
+
 cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         cbm_layout_level_t level, const char *center_node,
                                         int radius, int max_nodes,
                                         cbm_cluster_mode_t cluster_mode,
                                         cbm_color_mode_t color_mode,
-                                        bool force_optimize) {
+                                        bool force_optimize,
+                                        const char *exclude_labels_csv) {
     if (!store || !project)
         return NULL;
     if (max_nodes <= 0)
@@ -458,6 +481,24 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
     memset(&search_out, 0, sizeof(search_out));
     if (cbm_store_search(store, &params, &search_out) != CBM_STORE_OK)
         return calloc(CBM_ALLOC_ONE, sizeof(cbm_layout_result_t));
+
+    /* Apply node-label exclusion filter in-place on the results array.
+     * Compacts kept entries to the front; cbm_store_search_free later
+     * releases the original backing memory for both kept and dropped
+     * slots (node strings are store-owned, not per-result).
+     * Edges with endpoints pointing at dropped nodes fall out naturally
+     * because find_node_index will return -1 for their IDs below. */
+    if (exclude_labels_csv && *exclude_labels_csv) {
+        int kept = 0;
+        for (int i = 0; i < search_out.count; i++) {
+            if (!label_in_csv(search_out.results[i].node.label, exclude_labels_csv)) {
+                if (kept != i)
+                    search_out.results[kept] = search_out.results[i];
+                kept++;
+            }
+        }
+        search_out.count = kept;
+    }
 
     int n = search_out.count, total_count = search_out.total;
     if (n == 0) {

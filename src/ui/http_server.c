@@ -928,6 +928,11 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
             force_optimize = true;
     }
 
+    /* Optional comma-separated node labels to exclude before layout
+     * (e.g. "Module,File" for runtime lens) */
+    char exclude_labels[256] = {0};
+    get_query_param(hm->query, "exclude_node_types", exclude_labels, (int)sizeof(exclude_labels));
+
     /* Open a read-only store for this project */
     char db_path[1024];
     db_path_for_project(project, db_path, sizeof(db_path));
@@ -945,7 +950,7 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
 
     cbm_layout_result_t *layout =
         cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes,
-                           cluster_mode, color_mode, force_optimize);
+                           cluster_mode, color_mode, force_optimize, exclude_labels);
     cbm_store_close(store);
 
     if (!layout) {
