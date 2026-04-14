@@ -2009,16 +2009,16 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
 
                         int output_count = n_ranks < max_communities ? n_ranks : max_communities;
 
-                        /* Pre-allocate array for collecting member QNs (reused per community) */
-                        const char **member_qns = calloc((size_t)n, sizeof(const char *));
-                        int n_member_qns = 0;
+                        /* Pre-allocate array for collecting member nodes (reused per community) */
+                        const cbm_node_t **member_nodes = calloc((size_t)n, sizeof(const cbm_node_t *));
+                        int n_member_nodes = 0;
 
                         yyjson_mut_val *comm_arr = yyjson_mut_arr(doc);
                         if (ranks) {
                         for (int ci = 0; ci < output_count; ci++) {
                             int c = ranks[ci].id;
                             int size = 0;
-                            n_member_qns = 0;
+                            n_member_nodes = 0;
                             #ifndef MAX_DIR_BUCKETS
                             #define MAX_DIR_BUCKETS 64
                             #endif
@@ -2034,29 +2034,14 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
                             } label_buckets[32];
                             int n_label_buckets = 0;
 
-                            struct {
-                                const char *name;
-                                const char *label;
-                                const char *file_path;
-                            } top_members[5];
-                            memset(top_members, 0, sizeof(top_members));
-                            int n_top = 0;
-
                             for (int k = 0; k < n; k++) {
                                 if (comm[k] != c)
                                     continue;
                                 size++;
                                 const cbm_node_t *nd = &sout.results[filtered_idx[k]].node;
 
-                                if (nd->qualified_name && member_qns) {
-                                    member_qns[n_member_qns++] = nd->qualified_name;
-                                }
-
-                                if (n_top < 5 && nd->name) {
-                                    top_members[n_top].name = nd->name;
-                                    top_members[n_top].label = nd->label;
-                                    top_members[n_top].file_path = nd->file_path;
-                                    n_top++;
+                                if (member_nodes) {
+                                    member_nodes[n_member_nodes++] = nd;
                                 }
 
                                 if (nd->file_path) {
@@ -2150,37 +2135,32 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
                             }
                             yyjson_mut_obj_add_val(doc, cobj, "node_types", ntypes);
 
-                            yyjson_mut_val *members = yyjson_mut_arr(doc);
-                            for (int m = 0; m < n_top; m++) {
-                                yyjson_mut_val *mobj = yyjson_mut_obj(doc);
-                                if (top_members[m].name)
-                                    yyjson_mut_obj_add_strcpy(doc, mobj, "name",
-                                                              top_members[m].name);
-                                if (top_members[m].label)
-                                    yyjson_mut_obj_add_strcpy(doc, mobj, "type",
-                                                              top_members[m].label);
-                                if (top_members[m].file_path)
-                                    yyjson_mut_obj_add_strcpy(doc, mobj, "path",
-                                                              top_members[m].file_path);
-                                yyjson_mut_arr_add_val(members, mobj);
-                            }
-                            yyjson_mut_obj_add_val(doc, cobj, "top_members", members);
-
                             if (n_buckets > 0 && size > 0) {
                                 double focus =
                                     (double)dir_buckets[0].count / (double)size * 100.0;
                                 yyjson_mut_obj_add_real(doc, cobj, "focus", focus);
                             }
 
-                            if (member_qns && n_member_qns > 0) {
-                                yyjson_mut_val *qn_arr = yyjson_mut_arr(doc);
-                                for (int m = 0; m < n_member_qns; m++) {
-                                    yyjson_mut_val *qn_val =
-                                        yyjson_mut_strcpy(doc, member_qns[m]);
-                                    if (qn_val)
-                                        yyjson_mut_arr_add_val(qn_arr, qn_val);
+                            if (member_nodes && n_member_nodes > 0) {
+                                yyjson_mut_val *mem_arr = yyjson_mut_arr(doc);
+                                for (int m = 0; m < n_member_nodes; m++) {
+                                    const cbm_node_t *nd = member_nodes[m];
+                                    yyjson_mut_val *mobj = yyjson_mut_obj(doc);
+                                    if (nd->qualified_name)
+                                        yyjson_mut_obj_add_strcpy(doc, mobj, "qualified_name",
+                                                                  nd->qualified_name);
+                                    if (nd->name)
+                                        yyjson_mut_obj_add_strcpy(doc, mobj, "name",
+                                                                  nd->name);
+                                    if (nd->label)
+                                        yyjson_mut_obj_add_strcpy(doc, mobj, "type",
+                                                                  nd->label);
+                                    if (nd->file_path)
+                                        yyjson_mut_obj_add_strcpy(doc, mobj, "path",
+                                                                  nd->file_path);
+                                    yyjson_mut_arr_add_val(mem_arr, mobj);
                                 }
-                                yyjson_mut_obj_add_val(doc, cobj, "members", qn_arr);
+                                yyjson_mut_obj_add_val(doc, cobj, "members", mem_arr);
                             }
 
                             yyjson_mut_arr_add_val(comm_arr, cobj);
@@ -2188,7 +2168,7 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
                         }
                         yyjson_mut_obj_add_val(doc, root, "communities", comm_arr);
                         communities_emitted = true;
-                        free(member_qns);
+                        free(member_nodes);
                         free(ranks);
                         free(comm);
                     }
