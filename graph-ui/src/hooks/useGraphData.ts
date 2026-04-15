@@ -6,11 +6,13 @@ export type ColorMode = "stellar" | "louvain";
 export type GraphMode = "raw" | "runtime";
 
 /* Node labels dropped under each graph mode. "raw" keeps everything;
- * "runtime" drops Module+File scaffolding so the graph represents
- * functions, methods, classes, routes, and their CALLS edges. */
+ * "runtime" drops scaffolding and doc nodes (Module, File, Folder,
+ * Section, Resource, Project) so the graph represents things that
+ * actually run — functions, methods, classes, routes, variables,
+ * tests, fixtures — connected by their CALLS edges. */
 const EXCLUDE_BY_MODE: Record<GraphMode, string> = {
   raw: "",
-  runtime: "Module,File",
+  runtime: "Module,File,Folder,Section,Resource,Project",
 };
 
 export interface LayoutOptions {
