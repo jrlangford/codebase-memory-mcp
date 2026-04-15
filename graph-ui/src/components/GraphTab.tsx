@@ -417,6 +417,17 @@ export function GraphTab({ project }: GraphTabProps) {
             variant="outline"
             size="sm"
             onClick={() => {
+              const allIds = new Set(filteredData.nodes.map((n) => n.id));
+              setCameraTarget(computeCameraTarget(filteredData.nodes, allIds));
+            }}
+            title="Frame the entire graph in view"
+          >
+            Fit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
               setHighlightedIds(null);
               setSelectedPath(null);
               setSelectedNode(null);
