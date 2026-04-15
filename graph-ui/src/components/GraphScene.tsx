@@ -184,6 +184,65 @@ export function GraphScene({
   );
 }
 
+/* ── Helper: compute a camera target that frames all nodes ──
+ * Aspect-aware fit: distance is set so the bounding box fits against
+ * whichever FOV constraint binds (vertical or horizontal), with a
+ * small uniform margin. Camera keeps the same slight X/Y offset as
+ * computeCameraTarget so the framing has the same "angled 3D" feel. */
+
+export function computeFitAllTarget(
+  nodes: GraphNode[],
+): CameraTarget | null {
+  if (nodes.length === 0) return null;
+
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  for (const n of nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.y > maxY) maxY = n.y;
+    if (n.z < minZ) minZ = n.z;
+    if (n.z > maxZ) maxZ = n.z;
+  }
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const halfW = Math.max((maxX - minX) / 2, 1);
+  const halfH = Math.max((maxY - minY) / 2, 1);
+  const halfD = Math.max((maxZ - minZ) / 2, 1);
+
+  /* Vertical FOV 50° (matches Canvas camera config). Horizontal FOV
+   * follows from the current canvas aspect. */
+  const FOV_V_DEG = 50;
+  const canvas = typeof document !== "undefined"
+    ? document.querySelector("canvas")
+    : null;
+  const aspect = canvas
+    ? canvas.clientWidth / Math.max(canvas.clientHeight, 1)
+    : 16 / 9;
+  const halfFovV = (FOV_V_DEG / 2) * (Math.PI / 180);
+  const halfFovH = Math.atan(Math.tan(halfFovV) * aspect);
+
+  /* Distance to fit against each axis; take the larger so the
+   * binding axis is tight and the other gets natural extra room. */
+  const distV = halfH / Math.tan(halfFovV);
+  const distH = halfW / Math.tan(halfFovH);
+  const MARGIN = 1.08; /* 8% breathing room beyond tight fit */
+  const distance = Math.max(distV, distH) * MARGIN + halfD;
+
+  const lookAt = new THREE.Vector3(cx, cy, cz);
+  const position = new THREE.Vector3(
+    cx + distance * 0.2,
+    cy + distance * 0.15,
+    cz + distance,
+  );
+
+  return { position, lookAt };
+}
+
 /* ── Helper: compute camera target from node IDs ────────── */
 
 export function computeCameraTarget(

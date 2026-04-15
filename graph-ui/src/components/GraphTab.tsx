@@ -9,6 +9,7 @@ import {
 import {
   GraphScene,
   computeCameraTarget,
+  computeFitAllTarget,
   type CameraTarget,
 } from "./GraphScene";
 import { Sidebar } from "./Sidebar";
@@ -417,8 +418,7 @@ export function GraphTab({ project }: GraphTabProps) {
             variant="outline"
             size="sm"
             onClick={() => {
-              const allIds = new Set(filteredData.nodes.map((n) => n.id));
-              setCameraTarget(computeCameraTarget(filteredData.nodes, allIds));
+              setCameraTarget(computeFitAllTarget(filteredData.nodes));
             }}
             title="Frame the entire graph in view"
           >
