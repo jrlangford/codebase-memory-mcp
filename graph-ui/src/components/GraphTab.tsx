@@ -30,6 +30,18 @@ function saveWidth(key: string, value: number) {
   try { localStorage.setItem(key, String(Math.round(value))); } catch { /* ignore */ }
 }
 
+/* Persist boolean UI flags */
+function loadBool(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    return v === "true";
+  } catch { return fallback; }
+}
+function saveBool(key: string, value: boolean) {
+  try { localStorage.setItem(key, String(value)); } catch { /* ignore */ }
+}
+
 interface GraphTabProps {
   project: string | null;
 }
@@ -47,6 +59,7 @@ export function GraphTab({ project }: GraphTabProps) {
   const [graphMode, setGraphMode] = useState<GraphMode>("raw");
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
+  const [showToggles, setShowToggles] = useState(() => loadBool("cbm-show-toggles", true));
 
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
@@ -276,6 +289,22 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
+          {/* Collapse/expand the toggle cluster */}
+          <button
+            onClick={() => {
+              setShowToggles((v) => {
+                const next = !v;
+                saveBool("cbm-show-toggles", next);
+                return next;
+              });
+            }}
+            className="px-2 py-1.5 text-[11px] font-medium rounded-lg border border-border/30 bg-white/[0.03] text-white/50 hover:text-white/80 transition-colors"
+            title={showToggles ? "Hide toggles" : "Show toggles"}
+          >
+            {showToggles ? "⚙ −" : "⚙ +"}
+          </button>
+          {showToggles && (
+            <>
           {/* Graph mode toggle: Raw (all nodes) vs Runtime (excludes Module/File) */}
           <div className="flex rounded-lg overflow-hidden border border-border/30">
             <button
@@ -369,6 +398,8 @@ export function GraphTab({ project }: GraphTabProps) {
               {optimize ? "Force: on" : "Force: off"}
             </button>
           </div>
+            </>
+          )}
           {highlightedIds && (
             <Button
               size="sm"
