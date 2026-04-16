@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { GraphNode } from "../lib/types";
@@ -19,6 +19,11 @@ export function NodeCloud({
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const tempObj = useMemo(() => new THREE.Object3D(), []);
   const tempColor = useMemo(() => new THREE.Color(), []);
+  /* Track the max instance count seen so far — the InstancedMesh
+   * allocates its buffer once at construction, so we remount if
+   * the data grows beyond the current allocation. */
+  const [maxCount, setMaxCount] = useState(nodes.length);
+  if (nodes.length > maxCount) setMaxCount(nodes.length);
 
   /* Build instance color attributes — dim non-highlighted nodes */
   const colors = useMemo(() => {
@@ -47,6 +52,10 @@ export function NodeCloud({
     const mesh = meshRef.current;
     if (!mesh) return;
 
+    /* Sync the active instance count so the raycaster only tests real
+     * nodes — not stale ghosts from a previous, larger node set. */
+    mesh.count = nodes.length;
+
     const hasHighlight = highlightedIds && highlightedIds.size > 0;
 
     for (let i = 0; i < nodes.length; i++) {
@@ -64,8 +73,9 @@ export function NodeCloud({
 
   return (
     <instancedMesh
+      key={maxCount}
       ref={meshRef}
-      args={[undefined, undefined, nodes.length]}
+      args={[undefined, undefined, maxCount]}
       frustumCulled={false}
       onPointerOver={(e) => {
         e.stopPropagation();
