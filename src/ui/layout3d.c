@@ -29,10 +29,10 @@
 #define BH_THETA 1.2f
 
 /* Local optimization: gentle, preserves structure */
-#define LOCAL_REPULSION 2.0f
-#define LOCAL_ATTRACTION 0.3f
-#define LOCAL_ANCHOR_K 0.6f /* how strongly nodes stick to their anchor */
-#define LOCAL_ITERATIONS 15
+#define LOCAL_REPULSION 8.0f
+#define LOCAL_ATTRACTION 1.0f
+#define LOCAL_ANCHOR_K 0.25f /* how strongly nodes stick to their anchor */
+#define LOCAL_ITERATIONS 40
 #define Z_DEPTH_SPACING 50.0f /* gentle z-layering per call depth */
 
 /* ── Node colors/sizes ────────────────────────────────────────── */
@@ -327,9 +327,9 @@ static void local_optimize(body_t *b, int n, const int *es, const int *ed, int n
         /* Apply with capped displacement */
         for (int i = 0; i < n; i++) {
             float fm = sqrtf(b[i].fx * b[i].fx + b[i].fy * b[i].fy + b[i].fz * b[i].fz);
-            float speed = 0.5f;
-            if (speed * fm > 3.0f)
-                speed = 3.0f / (fm + 0.001f);
+            float speed = 1.0f;
+            if (speed * fm > 8.0f)
+                speed = 8.0f / (fm + 0.001f);
             b[i].x += b[i].fx * speed;
             b[i].y += b[i].fy * speed;
             b[i].z += b[i].fz * speed;
