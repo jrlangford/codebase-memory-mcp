@@ -740,6 +740,15 @@ static int run_post_extraction(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         return rc;
     }
 
+    /* Markdown link extraction — runs after all code nodes are in the buffer */
+    if (!check_cancel(p)) {
+        struct timespec t_mdl;
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t_mdl);
+        cbm_pipeline_pass_mdlinks(ctx, files, file_count);
+        cbm_log_info("pass.timing", "pass", "mdlinks", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t_mdl)));
+    }
+
     CBM_PROF_START(t_predump);
     run_predump_passes(p, ctx);
     CBM_PROF_END("pipeline", "3_predump_passes_total", t_predump);

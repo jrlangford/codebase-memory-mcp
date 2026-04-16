@@ -308,6 +308,7 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
   const { projects, loading, error, refresh } = useProjects();
   const [showModal, setShowModal] = useState(false);
   const [indexing, setIndexing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const aggregate = useMemo(() => {
     let totalNodes = 0, totalEdges = 0;
@@ -317,6 +318,16 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
     }
     return { projects: projects.length, nodes: totalNodes, edges: totalEdges };
   }, [projects]);
+
+  const filteredProjects = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter(
+      (p) =>
+        p.project.name.toLowerCase().includes(q) ||
+        (p.project.root_path ?? "").toLowerCase().includes(q),
+    );
+  }, [projects, searchQuery]);
 
   const deleteProject = useCallback(async (name: string) => {
     if (!confirm(`Delete index for "${name}"?`)) return;
@@ -343,11 +354,36 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
 
         {indexing && <IndexProgress onDone={() => { setIndexing(false); refresh(); }} />}
 
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-[15px] font-semibold text-foreground/80">Indexed Projects</h2>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowModal(true)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">+ New Index</button>
-            <button onClick={refresh} disabled={loading} className="px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[12px] text-foreground/40 font-medium transition-all disabled:opacity-30">{loading ? "..." : "Refresh"}</button>
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <h2 className="text-[15px] font-semibold text-foreground/80 shrink-0">
+            Indexed Projects
+            {searchQuery.trim() && (
+              <span className="ml-2 text-[11px] font-normal text-foreground/35 tabular-nums">
+                {filteredProjects.length} / {projects.length}
+              </span>
+            )}
+          </h2>
+          <div className="flex items-center gap-2 flex-1 justify-end">
+            <div className="relative flex-1 max-w-[280px]">
+              <input
+                type="text"
+                placeholder="Search projects…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-3 py-1.5 pr-7 rounded-lg bg-white/[0.04] border border-border/30 focus:border-primary/40 focus:bg-white/[0.06] text-[12px] text-foreground/70 placeholder:text-foreground/20 outline-none transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  title="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground/30 hover:text-foreground/60 text-[14px] leading-none"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            <button onClick={() => setShowModal(true)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all shrink-0">+ New Index</button>
+            <button onClick={refresh} disabled={loading} className="px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[12px] text-foreground/40 font-medium transition-all disabled:opacity-30 shrink-0">{loading ? "..." : "Refresh"}</button>
           </div>
         </div>
 
@@ -360,8 +396,22 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
           </div>
         )}
 
+        {!loading && projects.length > 0 && filteredProjects.length === 0 && (
+          <div className="text-center py-16 border border-border/20 rounded-xl">
+            <p className="text-foreground/30 text-[13px]">
+              No projects match “{searchQuery}”
+            </p>
+            <button
+              onClick={() => setSearchQuery("")}
+              className="mt-3 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[12px] text-foreground/50 font-medium transition-all"
+            >
+              Clear search
+            </button>
+          </div>
+        )}
+
         <div className="space-y-3">
-          {projects.map((p) => {
+          {filteredProjects.map((p) => {
             const totalNodes = p.schema?.node_labels?.reduce((s, l) => s + l.count, 0) ?? 0;
             const totalEdges = p.schema?.edge_types?.reduce((s, t) => s + t.count, 0) ?? 0;
             return (

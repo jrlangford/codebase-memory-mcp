@@ -907,6 +907,32 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
             max_nodes = v;
     }
 
+    char cluster_str[32] = {0};
+    cbm_cluster_mode_t cluster_mode = CBM_CLUSTER_LOUVAIN;
+    if (get_query_param(hm->query, "cluster", cluster_str, (int)sizeof(cluster_str))) {
+        if (strcmp(cluster_str, "dir") == 0)
+            cluster_mode = CBM_CLUSTER_DIR;
+    }
+
+    char color_str[32] = {0};
+    cbm_color_mode_t color_mode = CBM_COLOR_STELLAR;
+    if (get_query_param(hm->query, "color", color_str, (int)sizeof(color_str))) {
+        if (strcmp(color_str, "louvain") == 0)
+            color_mode = CBM_COLOR_LOUVAIN;
+    }
+
+    char optimize_str[32] = {0};
+    bool force_optimize = false;
+    if (get_query_param(hm->query, "optimize", optimize_str, (int)sizeof(optimize_str))) {
+        if (strcmp(optimize_str, "true") == 0 || strcmp(optimize_str, "1") == 0)
+            force_optimize = true;
+    }
+
+    /* Optional comma-separated node labels to exclude before layout
+     * (e.g. "Module,File" for runtime lens) */
+    char exclude_labels[256] = {0};
+    get_query_param(hm->query, "exclude_node_types", exclude_labels, (int)sizeof(exclude_labels));
+
     /* Open a read-only store for this project */
     char db_path[1024];
     db_path_for_project(project, db_path, sizeof(db_path));
@@ -923,7 +949,8 @@ static void handle_layout(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     cbm_layout_result_t *layout =
-        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes);
+        cbm_layout_compute(store, project, CBM_LAYOUT_OVERVIEW, NULL, 0, max_nodes,
+                           cluster_mode, color_mode, force_optimize, exclude_labels);
     cbm_store_close(store);
 
     if (!layout) {

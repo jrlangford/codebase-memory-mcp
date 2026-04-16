@@ -1,9 +1,15 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { useGraphData } from "../hooks/useGraphData";
+import {
+  useGraphData,
+  type ClusterMode,
+  type ColorMode,
+  type GraphMode,
+} from "../hooks/useGraphData";
 import {
   GraphScene,
   computeCameraTarget,
+  computeFitAllTarget,
   type CameraTarget,
 } from "./GraphScene";
 import { Sidebar } from "./Sidebar";
@@ -25,6 +31,18 @@ function saveWidth(key: string, value: number) {
   try { localStorage.setItem(key, String(Math.round(value))); } catch { /* ignore */ }
 }
 
+/* Persist boolean UI flags */
+function loadBool(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    return v === "true";
+  } catch { return fallback; }
+}
+function saveBool(key: string, value: boolean) {
+  try { localStorage.setItem(key, String(value)); } catch { /* ignore */ }
+}
+
 interface GraphTabProps {
   project: string | null;
 }
@@ -36,8 +54,13 @@ export function GraphTab({ project }: GraphTabProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
   const [showLabels, setShowLabels] = useState(true);
+  const [clusterMode, setClusterMode] = useState<ClusterMode>("louvain");
+  const [colorMode, setColorMode] = useState<ColorMode>("stellar");
+  const [optimize, setOptimize] = useState<boolean>(false);
+  const [graphMode, setGraphMode] = useState<GraphMode>("raw");
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
+  const [showToggles, setShowToggles] = useState(() => loadBool("cbm-show-toggles", true));
 
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
@@ -70,11 +93,11 @@ export function GraphTab({ project }: GraphTabProps) {
 
   useEffect(() => {
     if (project) {
-      fetchOverview(project);
+      fetchOverview(project, { clusterMode, colorMode, optimize, graphMode });
       setHighlightedIds(null);
       setSelectedPath(null);
     }
-  }, [project, fetchOverview]);
+  }, [project, clusterMode, colorMode, optimize, graphMode, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -250,6 +273,9 @@ export function GraphTab({ project }: GraphTabProps) {
           <p>
             {filteredData.nodes.length.toLocaleString()} nodes /{" "}
             {filteredData.edges.length.toLocaleString()} edges
+            <span className="text-white/20 ml-2">
+              [{clusterMode === "louvain" ? "louvain" : "directory"} clusters]
+            </span>
           </p>
           {data.nodes.length > filteredData.nodes.length && (
             <p className="text-white/25 mt-0.5">
@@ -264,6 +290,117 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
+          {/* Collapse/expand the toggle cluster */}
+          <button
+            onClick={() => {
+              setShowToggles((v) => {
+                const next = !v;
+                saveBool("cbm-show-toggles", next);
+                return next;
+              });
+            }}
+            className="px-2 py-1.5 text-[11px] font-medium rounded-lg border border-border/30 bg-white/[0.03] text-white/50 hover:text-white/80 transition-colors"
+            title={showToggles ? "Hide toggles" : "Show toggles"}
+          >
+            {showToggles ? "⚙ −" : "⚙ +"}
+          </button>
+          {showToggles && (
+            <>
+          {/* Graph mode toggle: Raw (all nodes) vs Runtime (excludes Module/File) */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setGraphMode("raw")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                graphMode === "raw"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Full call graph — no filtering"
+            >
+              Raw
+            </button>
+            <button
+              onClick={() => setGraphMode("runtime")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                graphMode === "runtime"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Runtime lens — excludes Module and File nodes before clustering"
+            >
+              Runtime
+            </button>
+          </div>
+          {/* Cluster mode toggle (layout): Directory vs Louvain */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setClusterMode("dir")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                clusterMode === "dir"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Ring layout by directory prefix"
+            >
+              Dir
+            </button>
+            <button
+              onClick={() => setClusterMode("louvain")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                clusterMode === "louvain"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Ring layout by Louvain community"
+            >
+              Louvain
+            </button>
+          </div>
+          {/* Color mode toggle: Stellar (by degree) vs Louvain (by community) */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setColorMode("stellar")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                colorMode === "stellar"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Color by node degree (stellar spectral palette)"
+            >
+              ★ Stellar
+            </button>
+            <button
+              onClick={() => setColorMode("louvain")}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                colorMode === "louvain"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title="Color by Louvain community id"
+            >
+              ◉ Louvain
+            </button>
+          </div>
+          {/* Optimize toggle: run the post-seed local_optimize force pass, or freeze */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setOptimize(!optimize)}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                optimize
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title={
+                optimize
+                  ? "Force pass is ON — click to freeze seeded positions"
+                  : "Force pass is OFF — click to enable gentle force optimization"
+              }
+            >
+              {optimize ? "Force: on" : "Force: off"}
+            </button>
+          </div>
+            </>
+          )}
           {highlightedIds && (
             <Button
               size="sm"
@@ -281,11 +418,21 @@ export function GraphTab({ project }: GraphTabProps) {
             variant="outline"
             size="sm"
             onClick={() => {
+              setCameraTarget(computeFitAllTarget(filteredData.nodes));
+            }}
+            title="Frame the entire graph in view"
+          >
+            Fit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
               setHighlightedIds(null);
               setSelectedPath(null);
               setSelectedNode(null);
               setCameraTarget(null);
-              fetchOverview(project);
+              fetchOverview(project, { clusterMode, colorMode, optimize, graphMode });
             }}
           >
             Refresh

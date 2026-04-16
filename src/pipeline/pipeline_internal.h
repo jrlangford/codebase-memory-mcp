@@ -348,6 +348,10 @@ int cbm_pipeline_githistory_apply(cbm_pipeline_ctx_t *ctx, const cbm_githistory_
 /* Pre-dump pass: decorator tags enrichment (operates on gbuf). */
 int cbm_pipeline_pass_decorator_tags(cbm_gbuf_t *gbuf, const char *project);
 
+/* Markdown link extraction: DOCUMENTS edges from .md files to source code. */
+int cbm_pipeline_pass_mdlinks(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files,
+                              int file_count);
+
 /* Pre-dump pass: config ↔ code linking. */
 int cbm_pipeline_pass_configlink(cbm_pipeline_ctx_t *ctx);
 

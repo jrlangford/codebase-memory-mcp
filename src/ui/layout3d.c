@@ -2,7 +2,9 @@
  * layout3d.c — Anchor-based 3D graph layout with local optimization.
  *
  * Strategy: structured first, then refined.
- *   1. Place nodes on a ring by directory cluster key (clean, sorted structure)
+ *   1. Place nodes on a ring by cluster key:
+ *      - DIR mode: first 3 directory components (organizational structure)
+ *      - LOUVAIN mode: community detection on call edges (functional modules)
  *   2. Assign z from call depth (entry points at top, callees below)
  *   3. Run GENTLE local optimization: ForceAtlas2 with strong anchor springs
  *      that keep nodes near their initial positions while untangling overlaps
@@ -69,6 +71,54 @@ static uint32_t stellar_color(int degree) {
 
 /* label-based colors removed — using stellar_color(degree) for graph rendering.
  * Label colors are handled in the frontend (lib/colors.ts) for sidebar/tooltips. */
+
+/* Community color — maps a Louvain community id to a distinct hex color.
+ *
+ * Uses golden-ratio hue spacing so that sequentially-numbered communities
+ * are maximally separated in hue space. Fixed saturation and lightness keep
+ * the palette visually uniform so no community overpowers its neighbours.
+ * Used when cluster_mode == CBM_CLUSTER_LOUVAIN so that the 3D graph
+ * visually matches the community structure the user sees in narratives.
+ */
+static uint32_t community_color(int community_id) {
+    if (community_id < 0)
+        return 0x808080; /* unassigned → neutral gray */
+
+    /* 137.507764° is the golden-ratio complement — each step maximally
+     * separates from the previous one around the hue circle. */
+    float hue = fmodf((float)community_id * 137.507764f, 360.0f);
+    const float s = 0.70f;
+    const float l = 0.58f;
+
+    float c = (1.0f - fabsf(2.0f * l - 1.0f)) * s;
+    float h1 = hue / 60.0f;
+    float x = c * (1.0f - fabsf(fmodf(h1, 2.0f) - 1.0f));
+    float r1, g1, b1;
+    if (h1 < 1.0f) {
+        r1 = c; g1 = x; b1 = 0;
+    } else if (h1 < 2.0f) {
+        r1 = x; g1 = c; b1 = 0;
+    } else if (h1 < 3.0f) {
+        r1 = 0; g1 = c; b1 = x;
+    } else if (h1 < 4.0f) {
+        r1 = 0; g1 = x; b1 = c;
+    } else if (h1 < 5.0f) {
+        r1 = x; g1 = 0; b1 = c;
+    } else {
+        r1 = c; g1 = 0; b1 = x;
+    }
+    float m = l - c / 2.0f;
+    int r = (int)((r1 + m) * 255.0f + 0.5f);
+    int g = (int)((g1 + m) * 255.0f + 0.5f);
+    int b = (int)((b1 + m) * 255.0f + 0.5f);
+    if (r < 0) { r = 0; }
+    if (r > 255) { r = 255; }
+    if (g < 0) { g = 0; }
+    if (g > 255) { g = 255; }
+    if (b < 0) { b = 0; }
+    if (b > 255) { b = 255; }
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
 
 static float size_for_label(const char *label) {
     if (!label)
@@ -382,9 +432,35 @@ static int find_node_index(const node_id_entry_t *map, int count, int64_t id) {
 
 /* ── Public API ───────────────────────────────────────────────── */
 
+/* Check whether `label` matches any comma-separated entry in `csv`.
+ * csv may be NULL or empty — both return false (no match). */
+static bool label_in_csv(const char *label, const char *csv) {
+    if (!label || !csv || !*csv)
+        return false;
+    size_t ll = strlen(label);
+    const char *p = csv;
+    while (*p) {
+        while (*p == ' ' || *p == ',')
+            p++;
+        const char *start = p;
+        while (*p && *p != ',')
+            p++;
+        size_t tl = (size_t)(p - start);
+        while (tl > 0 && start[tl - 1] == ' ')
+            tl--;
+        if (tl == ll && strncmp(start, label, ll) == 0)
+            return true;
+    }
+    return false;
+}
+
 cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         cbm_layout_level_t level, const char *center_node,
-                                        int radius, int max_nodes) {
+                                        int radius, int max_nodes,
+                                        cbm_cluster_mode_t cluster_mode,
+                                        cbm_color_mode_t color_mode,
+                                        bool force_optimize,
+                                        const char *exclude_labels_csv) {
     if (!store || !project)
         return NULL;
     if (max_nodes <= 0)
@@ -405,6 +481,24 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
     memset(&search_out, 0, sizeof(search_out));
     if (cbm_store_search(store, &params, &search_out) != CBM_STORE_OK)
         return calloc(CBM_ALLOC_ONE, sizeof(cbm_layout_result_t));
+
+    /* Apply node-label exclusion filter in-place on the results array.
+     * Compacts kept entries to the front; cbm_store_search_free later
+     * releases the original backing memory for both kept and dropped
+     * slots (node strings are store-owned, not per-result).
+     * Edges with endpoints pointing at dropped nodes fall out naturally
+     * because find_node_index will return -1 for their IDs below. */
+    if (exclude_labels_csv && *exclude_labels_csv) {
+        int kept = 0;
+        for (int i = 0; i < search_out.count; i++) {
+            if (!label_in_csv(search_out.results[i].node.label, exclude_labels_csv)) {
+                if (kept != i)
+                    search_out.results[kept] = search_out.results[i];
+                kept++;
+            }
+        }
+        search_out.count = kept;
+    }
 
     int n = search_out.count, total_count = search_out.total;
     if (n == 0) {
@@ -503,7 +597,45 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         free(lbls);
     }
 
-    /* 5. Seed positions: ring by directory cluster key + z from call depth */
+    /* 4b. Louvain community detection (when requested by layout OR by coloring) */
+    int *louvain_community = NULL;
+    bool need_louvain = (cluster_mode == CBM_CLUSTER_LOUVAIN) ||
+                        (color_mode == CBM_COLOR_LOUVAIN);
+    if (need_louvain && mapped > 0) {
+        /* Build edge list for Louvain from the already-fetched edges */
+        int64_t *node_ids = malloc((size_t)n * sizeof(int64_t));
+        cbm_louvain_edge_t *lv_edges = malloc((size_t)mapped * sizeof(cbm_louvain_edge_t));
+        if (node_ids && lv_edges) {
+            for (int i = 0; i < n; i++)
+                node_ids[i] = search_out.results[i].node.id;
+            for (int e = 0; e < mapped; e++) {
+                lv_edges[e].src = search_out.results[es[e]].node.id;
+                lv_edges[e].dst = search_out.results[ed[e]].node.id;
+            }
+            cbm_louvain_result_t *lv_out = NULL;
+            int lv_count = 0;
+            if (cbm_louvain(node_ids, n, lv_edges, mapped, &lv_out, &lv_count) == CBM_STORE_OK &&
+                lv_out) {
+                louvain_community = calloc((size_t)n, sizeof(int));
+                if (louvain_community) {
+                    /* Map Louvain results back to node indices */
+                    for (int r = 0; r < lv_count; r++) {
+                        for (int i = 0; i < n; i++) {
+                            if (node_ids[i] == lv_out[r].node_id) {
+                                louvain_community[i] = lv_out[r].community;
+                                break;
+                            }
+                        }
+                    }
+                }
+                free(lv_out);
+            }
+        }
+        free(node_ids);
+        free(lv_edges);
+    }
+
+    /* 5. Seed positions: ring by cluster key + z from call depth */
     body_t *bodies = calloc((size_t)n, sizeof(body_t));
     cbm_layout_result_t *result = calloc(CBM_ALLOC_ONE, sizeof(*result));
     if (!result || !bodies) {
@@ -512,6 +644,7 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         free(es);
         free(ed);
         free(cdepth);
+        free(louvain_community);
         cbm_layout_free(result);
         free_edge_array(all_edges, mapped);
         cbm_store_search_free(&search_out);
@@ -523,24 +656,32 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
 
     for (int i = 0; i < n; i++) {
         const cbm_node_t *sn = &search_out.results[i].node;
-        const char *fp = sn->file_path ? sn->file_path : "";
 
-        /* Cluster key = first 3 dir components */
-        char ck[CBM_SZ_256] = {0};
-        {
-            const char *p = fp;
-            int sl = 0, ki = 0;
-            while (*p && ki < 255) {
-                if (*p == '/') {
-                    sl++;
-                    if (sl >= 3)
-                        break;
+        uint32_t h;
+        if (cluster_mode == CBM_CLUSTER_LOUVAIN && louvain_community) {
+            /* Louvain layout mode: hash the community ID for ring placement */
+            char comm_key[32];
+            snprintf(comm_key, sizeof(comm_key), "comm_%d", louvain_community[i]);
+            h = fnv1a(comm_key);
+        } else {
+            /* Directory mode: hash first 3 dir components */
+            const char *fp = sn->file_path ? sn->file_path : "";
+            char ck[CBM_SZ_256] = {0};
+            {
+                const char *p = fp;
+                int sl = 0, ki = 0;
+                while (*p && ki < 255) {
+                    if (*p == '/') {
+                        sl++;
+                        if (sl >= 3)
+                            break;
+                    }
+                    ck[ki++] = *p++;
                 }
-                ck[ki++] = *p++;
             }
+            h = fnv1a(ck);
         }
 
-        uint32_t h = fnv1a(ck);
         float angle = ((float)(h & 0xFFFF) / 65535.0f) * 6.2832f;
         float r = 500.0f + ((float)((h >> 16) & 0xFF) / 255.0f) * 250.0f;
 
@@ -563,15 +704,26 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
         result->nodes[i].name = sn->name ? strdup(sn->name) : NULL;
         result->nodes[i].qualified_name = sn->qualified_name ? strdup(sn->qualified_name) : NULL;
         result->nodes[i].file_path = sn->file_path ? strdup(sn->file_path) : NULL;
-        result->nodes[i].color = stellar_color(deg[i]);
+        /* Coloring is independent of layout mode. Louvain coloring uses the
+         * community id via a golden-ratio hue palette; stellar coloring maps
+         * degree to a Hertzsprung-Russell-style spectral type. */
+        if (color_mode == CBM_COLOR_LOUVAIN && louvain_community) {
+            result->nodes[i].color = community_color(louvain_community[i]);
+        } else {
+            result->nodes[i].color = stellar_color(deg[i]);
+        }
         /* Size: base from label + boost from degree (hubs are bigger stars) */
         float base_size = size_for_label(sn->label);
         float deg_boost = (deg[i] > 5) ? fminf((float)deg[i] * 0.3f, 10.0f) : 0;
         result->nodes[i].size = base_size + deg_boost;
     }
 
-    /* 6. Gentle local optimization (anchor-preserving) */
-    local_optimize(bodies, n, es, ed, mapped);
+    /* 6. Gentle local optimization (anchor-preserving) — skipped when the
+     * caller has asked for raw seeded positions so the ring layout stays
+     * intact for camera-driven screenshots. */
+    if (force_optimize) {
+        local_optimize(bodies, n, es, ed, mapped);
+    }
 
     /* 7. Copy positions */
     for (int i = 0; i < n; i++) {
@@ -596,6 +748,7 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
     free(es);
     free(ed);
     free(cdepth);
+    free(louvain_community);
     free_edge_array(all_edges, mapped);
     cbm_store_search_free(&search_out);
     return result;

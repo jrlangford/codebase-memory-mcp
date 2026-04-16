@@ -51,13 +51,33 @@ typedef enum {
     CBM_LAYOUT_DETAIL = 1    /* individual nodes in region */
 } cbm_layout_level_t;
 
+typedef enum {
+    CBM_CLUSTER_DIR = 0,     /* cluster by first 3 directory components (default) */
+    CBM_CLUSTER_LOUVAIN = 1  /* cluster by Louvain community detection on call edges */
+} cbm_cluster_mode_t;
+
+typedef enum {
+    CBM_COLOR_STELLAR = 0,   /* color by degree using stellar-spectral palette (default) */
+    CBM_COLOR_LOUVAIN = 1    /* color by Louvain community id (requires Louvain pass) */
+} cbm_color_mode_t;
+
 /* Compute layout for a project.
  * center_node: QN of center (for detail level), NULL for overview
  * radius: hop distance from center (for detail level)
- * max_nodes: cap on returned nodes */
+ * max_nodes: cap on returned nodes
+ * cluster_mode: how to group nodes for ring placement
+ * color_mode: how to assign node colors (stellar-by-degree or Louvain community)
+ * force_optimize: if false, skip the post-seed local_optimize() force pass so
+ *                 nodes stay on their ring-seeded positions
+ * exclude_labels_csv: comma-separated node labels to drop before layout
+ *                    (e.g. "Module,File" for runtime lens), NULL/"" disables */
 cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         cbm_layout_level_t level, const char *center_node,
-                                        int radius, int max_nodes);
+                                        int radius, int max_nodes,
+                                        cbm_cluster_mode_t cluster_mode,
+                                        cbm_color_mode_t color_mode,
+                                        bool force_optimize,
+                                        const char *exclude_labels_csv);
 
 /* Free a layout result. */
 void cbm_layout_free(cbm_layout_result_t *result);
