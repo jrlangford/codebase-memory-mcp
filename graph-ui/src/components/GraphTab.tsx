@@ -299,7 +299,7 @@ export function GraphTab({ project }: GraphTabProps) {
           )}
         </div>
 
-        <div className="absolute top-4 right-4 flex gap-2">
+        <div className="absolute top-4 right-4 flex gap-2 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto">
           {/* Collapse/expand the toggle cluster */}
           <button
             onClick={() => {

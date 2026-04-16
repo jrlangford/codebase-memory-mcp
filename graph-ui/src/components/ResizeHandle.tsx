@@ -30,8 +30,13 @@ export function ResizeHandle({ side, onResize }: ResizeHandleProps) {
     [onResize, side],
   );
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
     dragging.current = false;
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
   }, []);
 
   return (
