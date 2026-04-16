@@ -29,6 +29,9 @@ const EDGE_TYPE_COLORS: Record<string, string> = {
   ASYNC_CALLS: "#ec4899",
   MEMBER_OF: "#64748b",
   TESTS_FILE: "#06b6d4",
+  SPECIFIES: "#ec4899",
+  PRESCRIBES: "#f43f5e",
+  REFERENCES: "#94a3b8",
 };
 
 const DEFAULT_EDGE_COLOR = "#1C8585";
