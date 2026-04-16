@@ -1,9 +1,13 @@
 /*
- * pass_mdlinks.c — Extract DOCUMENTS edges from markdown links to source code.
+ * pass_mdlinks.c — Extract REFERENCES edges from markdown links to source code.
  *
  * Scans markdown files for inline links [text](path) that reference
- * source code files within the same project. Creates DOCUMENTS edges
+ * source code files within the same project. Creates REFERENCES edges
  * from the markdown Module node to the target code node.
+ *
+ * REFERENCES is a weak edge — any markdown link produces one. Stronger,
+ * authoritative claims (a doc saying "this IS the behaviour of X") are
+ * emitted as SPECIFIES / PRESCRIBES edges by pass_behaviourdoc.
  *
  * Resolution:
  *   [text](relative/path.go)        → Module node for that file
@@ -332,7 +336,7 @@ int cbm_pipeline_pass_mdlinks(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *fi
                         char props[256];
                         snprintf(props, sizeof(props), "{\"line\":%d,\"anchor\":\"%s\"}",
                                  links[li].line, links[li].anchor);
-                        cbm_gbuf_insert_edge(ctx->gbuf, src_node->id, target_id, "DOCUMENTS",
+                        cbm_gbuf_insert_edge(ctx->gbuf, src_node->id, target_id, "REFERENCES",
                                              props);
                         total_edges++;
                     }

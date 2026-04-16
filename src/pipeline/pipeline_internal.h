@@ -348,9 +348,25 @@ int cbm_pipeline_githistory_apply(cbm_pipeline_ctx_t *ctx, const cbm_githistory_
 /* Pre-dump pass: decorator tags enrichment (operates on gbuf). */
 int cbm_pipeline_pass_decorator_tags(cbm_gbuf_t *gbuf, const char *project);
 
-/* Markdown link extraction: DOCUMENTS edges from .md files to source code. */
+/* Markdown link extraction: REFERENCES edges from .md files to source code. */
 int cbm_pipeline_pass_mdlinks(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files,
                               int file_count);
+
+/* Behaviour-doc frontmatter extraction: promotes markdown Modules with
+ * specifies/prescribes frontmatter to :BehaviourDoc and emits authoritative
+ * SPECIFIES / PRESCRIBES edges to the code they describe. */
+int cbm_pipeline_pass_behaviourdoc(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files,
+                                   int file_count);
+
+/* Test-only re-export of the internal YAML-frontmatter parser used by
+ * pass_behaviourdoc. Parses `src` and writes extracted repo-relative QNs
+ * into the out_specifies / out_prescribes arrays (caller owns the
+ * strings). Returns 0 on success, -1 if no frontmatter block is found.
+ * Not for production code — use cbm_pipeline_pass_behaviourdoc instead. */
+int cbm_pipeline_behaviourdoc_parse_for_test(const char *src, int src_len,
+                                             char **out_specifies, int *n_specifies,
+                                             char **out_prescribes, int *n_prescribes,
+                                             int max_per_key);
 
 /* Pre-dump pass: config ↔ code linking. */
 int cbm_pipeline_pass_configlink(cbm_pipeline_ctx_t *ctx);

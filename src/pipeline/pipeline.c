@@ -749,6 +749,17 @@ static int run_post_extraction(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
                      itoa_buf((int)elapsed_ms(t_mdl)));
     }
 
+    /* Behaviour-doc frontmatter — promotes docs to :BehaviourDoc and emits
+     * authoritative SPECIFIES / PRESCRIBES edges. Runs after mdlinks so the
+     * weaker REFERENCES edges are already in place. */
+    if (!check_cancel(p)) {
+        struct timespec t_bd;
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t_bd);
+        cbm_pipeline_pass_behaviourdoc(ctx, files, file_count);
+        cbm_log_info("pass.timing", "pass", "behaviourdoc", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t_bd)));
+    }
+
     CBM_PROF_START(t_predump);
     run_predump_passes(p, ctx);
     CBM_PROF_END("pipeline", "3_predump_passes_total", t_predump);
