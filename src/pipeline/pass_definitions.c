@@ -243,6 +243,32 @@ static void process_def(cbm_pipeline_ctx_t *ctx, const CBMDefinition *def, const
     free(file_qn);
     if (def->parent_class && def->label && strcmp(def->label, "Method") == 0) {
         const cbm_gbuf_node_t *parent = cbm_gbuf_find_by_qn(ctx->gbuf, def->parent_class);
+        /* Go cross-file fallback: method may be in a different file from its struct. */
+        if (!parent && def->receiver) {
+            const char *r = def->receiver;
+            while (*r == '(' || *r == ' ') r++;
+            while (*r && *r != ' ' && *r != '*' && *r != ')') r++;
+            while (*r == ' ' || *r == '*') r++;
+            const char *end = r;
+            while (*end && *end != ')' && *end != ' ' && *end != '[') end++;
+            if (end > r) {
+                char recv_type[CBM_SZ_256];
+                size_t len = (size_t)(end - r);
+                if (len < sizeof(recv_type)) {
+                    memcpy(recv_type, r, len);
+                    recv_type[len] = '\0';
+                    const cbm_gbuf_node_t **candidates = NULL;
+                    int n = 0;
+                    cbm_gbuf_find_by_name(ctx->gbuf, recv_type, &candidates, &n);
+                    for (int k = 0; k < n; k++) {
+                        if (candidates[k]->label && strcmp(candidates[k]->label, "Class") == 0) {
+                            parent = candidates[k];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         if (parent && node_id > 0) {
             cbm_gbuf_insert_edge(ctx->gbuf, parent->id, node_id, "DEFINES_METHOD", "{}");
         }

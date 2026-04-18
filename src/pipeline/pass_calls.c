@@ -415,6 +415,40 @@ int cbm_pipeline_pass_calls(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *file
             }
         }
 
+        /* LSP-resolved calls: type-aware resolution (e.g., Go interface dispatch).
+         * These supplement text-based calls — only add edges that don't already exist. */
+        for (int c = 0; c < result->resolved_calls.count; c++) {
+            CBMResolvedCall *lsp = &result->resolved_calls.items[c];
+            if (!lsp->caller_qn || !lsp->callee_qn) {
+                continue;
+            }
+            const cbm_gbuf_node_t *source = cbm_gbuf_find_by_qn(ctx->gbuf, lsp->caller_qn);
+            const cbm_gbuf_node_t *target = cbm_gbuf_find_by_qn(ctx->gbuf, lsp->callee_qn);
+            if (!source || !target || source->id == target->id) {
+                continue;
+            }
+            const cbm_gbuf_edge_t **existing = NULL;
+            int existing_count = 0;
+            cbm_gbuf_find_edges_by_source_type(ctx->gbuf, source->id, "CALLS", &existing,
+                                               &existing_count);
+            bool already = false;
+            for (int e = 0; e < existing_count; e++) {
+                if (existing[e]->target_id == target->id) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already) {
+                char props[CBM_SZ_512];
+                snprintf(props, sizeof(props),
+                         "{\"callee\":\"%s\",\"confidence\":%.2f,\"strategy\":\"%s\"}",
+                         lsp->callee_qn, (double)lsp->confidence,
+                         lsp->strategy ? lsp->strategy : "lsp");
+                cbm_gbuf_insert_edge(ctx->gbuf, source->id, target->id, "CALLS", props);
+                resolved++;
+            }
+        }
+
         free(module_qn);
         free_import_map(imp_keys, imp_vals, imp_count);
         if (result_owned) {

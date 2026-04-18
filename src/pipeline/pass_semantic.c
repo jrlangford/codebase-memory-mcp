@@ -214,7 +214,28 @@ typedef struct {
     int64_t id;
 } go_imethod_t;
 
-/* Check if class has all interface methods and create IMPLEMENTS + OVERRIDE edges. */
+/* Find a concrete method of a class by name, preferring DEFINES_METHOD edges
+ * (handles cross-file Go methods) with QN-construction fallback. */
+static const cbm_gbuf_node_t *find_class_method(const cbm_gbuf_t *gbuf,
+                                                 const cbm_gbuf_node_t *cls,
+                                                 const cbm_gbuf_edge_t **cls_dm, int cls_dm_count,
+                                                 const char *method_name) {
+    /* Primary: search via DEFINES_METHOD edges. */
+    for (int d = 0; d < cls_dm_count; d++) {
+        const cbm_gbuf_node_t *m = cbm_gbuf_find_by_id(gbuf, cls_dm[d]->target_id);
+        if (m && m->name && strcmp(m->name, method_name) == 0) {
+            return m;
+        }
+    }
+    /* Fallback: QN construction (same-file case where DEFINES_METHOD may be absent). */
+    char method_qn[CBM_SZ_512];
+    snprintf(method_qn, sizeof(method_qn), "%s.%s", cls->qualified_name, method_name);
+    return cbm_gbuf_find_by_qn(gbuf, method_qn);
+}
+
+/* Check if class has all interface methods and create IMPLEMENTS + OVERRIDE edges.
+ * Uses DEFINES_METHOD edges from the Class node when available (handles cross-file
+ * Go methods), with QN-construction fallback for backward compatibility. */
 static int check_go_class_implements(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_node_t *cls,
                                      const cbm_gbuf_node_t *iface, const go_imethod_t *imethods,
                                      int im_count) {
@@ -224,21 +245,28 @@ static int check_go_class_implements(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_nod
     if (!fp_ends_with(cls->file_path, ".go")) {
         return 0;
     }
-    char prefix[CBM_SZ_512];
-    snprintf(prefix, sizeof(prefix), "%s.", cls->qualified_name);
+
+    /* Get the class's concrete methods via DEFINES_METHOD edges (may be 0). */
+    const cbm_gbuf_edge_t **cls_dm = NULL;
+    int cls_dm_count = 0;
+    cbm_gbuf_find_edges_by_source_type(ctx->gbuf, cls->id, "DEFINES_METHOD", &cls_dm,
+                                       &cls_dm_count);
+
+    /* Check that ALL interface methods are satisfied. */
     for (int m = 0; m < im_count; m++) {
-        char method_qn[CBM_SZ_512];
-        snprintf(method_qn, sizeof(method_qn), "%s%s", prefix, imethods[m].name);
-        if (!cbm_gbuf_find_by_qn(ctx->gbuf, method_qn)) {
+        if (!find_class_method(ctx->gbuf, cls, cls_dm, cls_dm_count, imethods[m].name)) {
             return 0;
         }
     }
+
+    /* All interface methods satisfied — create IMPLEMENTS edge. */
     cbm_gbuf_insert_edge(ctx->gbuf, cls->id, iface->id, "IMPLEMENTS", "{}");
     int edges = SKIP_ONE;
+
+    /* Create OVERRIDE edges: concrete method → interface method. */
     for (int m = 0; m < im_count; m++) {
-        char method_qn[CBM_SZ_512];
-        snprintf(method_qn, sizeof(method_qn), "%s%s", prefix, imethods[m].name);
-        const cbm_gbuf_node_t *cm = cbm_gbuf_find_by_qn(ctx->gbuf, method_qn);
+        const cbm_gbuf_node_t *cm =
+            find_class_method(ctx->gbuf, cls, cls_dm, cls_dm_count, imethods[m].name);
         if (cm) {
             cbm_gbuf_insert_edge(ctx->gbuf, cm->id, imethods[m].id, "OVERRIDE", "{}");
             edges++;
