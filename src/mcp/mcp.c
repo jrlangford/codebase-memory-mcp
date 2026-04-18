@@ -2211,9 +2211,10 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
  * edge_types were found (caller must keep alive until types are consumed), or NULL. */
 static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
                                             const char **out_types, int *out_count) {
-    static const char *mode_calls[] = {"CALLS"};
-    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
-    static const char *mode_cross_svc[] = {"HTTP_CALLS", "ASYNC_CALLS", "DATA_FLOWS", "CALLS"};
+    static const char *mode_calls[] = {"CALLS", "OVERRIDE"};
+    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS", "OVERRIDE"};
+    static const char *mode_cross_svc[] = {"HTTP_CALLS", "ASYNC_CALLS", "DATA_FLOWS", "CALLS",
+                                           "OVERRIDE"};
 
     *out_count = 0;
 
@@ -2239,13 +2240,13 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
     yyjson_doc_free(et_doc); /* no explicit types found, free */
 
     const char **defaults = mode_calls;
-    int n_defaults = SKIP_ONE;
+    int n_defaults = MCP_N_DEFAULTS_2; /* CALLS + OVERRIDE */
     if (mode && strcmp(mode, "data_flow") == 0) {
         defaults = mode_data_flow;
-        n_defaults = MCP_N_DEFAULTS_2;
+        n_defaults = 3; /* CALLS + DATA_FLOWS + OVERRIDE */
     } else if (mode && strcmp(mode, "cross_service") == 0) {
         defaults = mode_cross_svc;
-        n_defaults = MCP_N_DEFAULTS_4;
+        n_defaults = 5; /* HTTP_CALLS + ASYNC_CALLS + DATA_FLOWS + CALLS + OVERRIDE */
     }
     for (int i = 0; i < n_defaults; i++) {
         out_types[i] = defaults[i];
@@ -2280,6 +2281,9 @@ static yyjson_mut_val *bfs_to_json_array(yyjson_mut_doc *doc, cbm_traverse_resul
         yyjson_mut_obj_add_str(
             doc, item, "qualified_name",
             tr->visited[i].node.qualified_name ? tr->visited[i].node.qualified_name : "");
+        if (tr->visited[i].node.label) {
+            yyjson_mut_obj_add_str(doc, item, "label", tr->visited[i].node.label);
+        }
         yyjson_mut_obj_add_int(doc, item, "hop", tr->visited[i].hop);
         if (risk_labels) {
             yyjson_mut_obj_add_str(doc, item, "risk",
