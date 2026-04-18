@@ -1469,7 +1469,12 @@ static void process_function(GoLSPContext* ctx, TSNode func_node) {
     if (!func_name || !func_name[0]) return;
 
     /* For methods, include receiver type in QN to match extract_defs.c QN format:
-     * package.ReceiverType.MethodName instead of package.MethodName. */
+     * package.ReceiverType.MethodName instead of package.MethodName.
+     *
+     * INVARIANT: see extract_defs.c extract_func_def — four method-QN writers
+     * (here, extract_func_def, extract_unified.c compute_func_qn, and
+     * helpers.c cbm_enclosing_func_qn) must agree or CALLS silently re-parent
+     * to __file__. */
     TSNode recv_check = ts_node_child_by_field_name(func_node, "receiver", 8);
     if (!ts_node_is_null(recv_check)) {
         /* Parse receiver type name from the parameter_declaration inside receiver. */

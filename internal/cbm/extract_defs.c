@@ -1601,7 +1601,15 @@ static void extract_func_def(CBMExtractCtx *ctx, TSNode node, const CBMLangSpec 
         resolve_cpp_trailing_return(a, func_node, ctx->source, &def);
     }
 
-    // Receiver (Go methods) — also sets parent_class and recomputes QN
+    // Receiver (Go methods) — also sets parent_class and recomputes QN.
+    //
+    // INVARIANT: Go method QNs are produced in FOUR places that must agree,
+    // or call source attribution silently misses and falls back to the
+    // __file__ node. Edit all four in the same commit:
+    //   1. this block (the Method node's QN)
+    //   2. extract_unified.c compute_func_qn (scope-based enclosing_func_qn)
+    //   3. helpers.c cbm_enclosing_func_qn (non-unified extractors)
+    //   4. lsp/go_lsp.c process_function (LSP call attribution)
     TSNode recv = ts_node_child_by_field_name(node, TS_FIELD("receiver"));
     if (!ts_node_is_null(recv)) {
         def.receiver = cbm_node_text(a, recv, ctx->source);

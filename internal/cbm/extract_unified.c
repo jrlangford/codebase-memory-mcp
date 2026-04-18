@@ -116,6 +116,8 @@ static const char *compute_func_qn(CBMExtractCtx *ctx, TSNode node, const CBMLan
     // Go method: receiver is a sibling field on method_declaration, not an ancestor scope.
     // Must match the receiver-aware QN that extract_func_def sets on the Method node,
     // otherwise CALLS source-node lookup misses and falls back to the file node.
+    //
+    // INVARIANT: see extract_defs.c extract_func_def — four method-QN writers must agree.
     if (ctx->language == CBM_LANG_GO) {
         TSNode recv = ts_node_child_by_field_name(node, TS_FIELD("receiver"));
         if (!ts_node_is_null(recv)) {
