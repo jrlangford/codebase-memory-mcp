@@ -1601,11 +1601,30 @@ static void extract_func_def(CBMExtractCtx *ctx, TSNode node, const CBMLangSpec 
         resolve_cpp_trailing_return(a, func_node, ctx->source, &def);
     }
 
-    // Receiver (Go methods)
+    // Receiver (Go methods) — also sets parent_class and recomputes QN
     TSNode recv = ts_node_child_by_field_name(node, TS_FIELD("receiver"));
     if (!ts_node_is_null(recv)) {
         def.receiver = cbm_node_text(a, recv, ctx->source);
         def.label = "Method";
+
+        // Extract receiver type name from "(name *Type)" or "(name Type)" or "(*Type)"
+        const char *r = def.receiver;
+        while (*r == '(' || *r == ' ') r++;
+        // Skip receiver name (identifier before space or *)
+        while (*r && *r != ' ' && *r != '*' && *r != ')') r++;
+        // Skip spaces and pointer star
+        while (*r == ' ' || *r == '*') r++;
+        // r now points to the type name
+        const char *end = r;
+        while (*end && *end != ')' && *end != ' ' && *end != '[') end++;
+        if (end > r) {
+            char *recv_type = cbm_arena_strndup(a, r, (size_t)(end - r));
+            // Compute class QN: project.path.ReceiverType
+            char *class_qn = cbm_fqn_compute(a, ctx->project, ctx->rel_path, recv_type);
+            def.parent_class = class_qn;
+            // Recompute method QN: project.path.ReceiverType.MethodName
+            def.qualified_name = cbm_arena_sprintf(a, "%s.%s", class_qn, name);
+        }
     }
 
     // Decorators + route extraction from decorator AST

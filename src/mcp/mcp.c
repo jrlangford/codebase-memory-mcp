@@ -304,14 +304,19 @@ static const tool_def_t TOOLS[] = {
     {"trace_path",
      "Trace paths through the code graph. Modes: calls (callers/callees), data_flow (value "
      "propagation with args at each hop), cross_service (through HTTP/async Route nodes). "
+     "All modes also follow OVERRIDE edges, which connect concrete methods to the interface "
+     "methods they implement. When a trace shows MethodA at hop N followed by a same-named "
+     "method at hop N+1 (different qualified_name), the hop N+1 node is the interface method. "
+     "The hop N target may be a name-collision artifact from text-based resolution. Query the "
+     "interface method's other OVERRIDE edges to find all concrete implementations. "
      "Use INSTEAD OF grep for callers, dependencies, impact analysis, or data flow tracing.",
      "{\"type\":\"object\",\"properties\":{\"function_name\":{\"type\":\"string\"},\"project\":{"
      "\"type\":\"string\"},\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\","
      "\"both\"],\"default\":\"both\"},\"depth\":{\"type\":\"integer\",\"default\":3},\"mode\":{"
      "\"type\":\"string\",\"enum\":[\"calls\",\"data_flow\",\"cross_service\"],\"default\":"
-     "\"calls\",\"description\":\"calls: follow CALLS edges. data_flow: follow CALLS+DATA_FLOWS "
-     "with arg expressions. cross_service: follow HTTP_CALLS+ASYNC_CALLS+DATA_FLOWS through "
-     "Routes.\"},\"parameter_name\":{\"type\":\"string\",\"description\":\"For data_flow mode: "
+     "\"calls\",\"description\":\"calls: follow CALLS+OVERRIDE edges. data_flow: follow "
+     "CALLS+DATA_FLOWS+OVERRIDE with arg expressions. cross_service: follow "
+     "HTTP_CALLS+ASYNC_CALLS+DATA_FLOWS+CALLS+OVERRIDE through Routes.\"},\"parameter_name\":{\"type\":\"string\",\"description\":\"For data_flow mode: "
      "scope trace to a specific parameter name\"},\"edge_types\":{\"type\":\"array\",\"items\":{"
      "\"type\":\"string\"}},\"risk_labels\":{\"type\":\"boolean\",\"default\":false,"
      "\"description\":\"Add risk classification (CRITICAL/HIGH/MEDIUM/LOW) based on hop distance"
@@ -2211,9 +2216,10 @@ static char *handle_calculate_communities(cbm_mcp_server_t *srv, const char *arg
  * edge_types were found (caller must keep alive until types are consumed), or NULL. */
 static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
                                             const char **out_types, int *out_count) {
-    static const char *mode_calls[] = {"CALLS"};
-    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
-    static const char *mode_cross_svc[] = {"HTTP_CALLS", "ASYNC_CALLS", "DATA_FLOWS", "CALLS"};
+    static const char *mode_calls[] = {"CALLS", "OVERRIDE"};
+    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS", "OVERRIDE"};
+    static const char *mode_cross_svc[] = {"HTTP_CALLS", "ASYNC_CALLS", "DATA_FLOWS", "CALLS",
+                                           "OVERRIDE"};
 
     *out_count = 0;
 
@@ -2239,13 +2245,13 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
     yyjson_doc_free(et_doc); /* no explicit types found, free */
 
     const char **defaults = mode_calls;
-    int n_defaults = SKIP_ONE;
+    int n_defaults = MCP_N_DEFAULTS_2; /* CALLS + OVERRIDE */
     if (mode && strcmp(mode, "data_flow") == 0) {
         defaults = mode_data_flow;
-        n_defaults = MCP_N_DEFAULTS_2;
+        n_defaults = 3; /* CALLS + DATA_FLOWS + OVERRIDE */
     } else if (mode && strcmp(mode, "cross_service") == 0) {
         defaults = mode_cross_svc;
-        n_defaults = MCP_N_DEFAULTS_4;
+        n_defaults = 5; /* HTTP_CALLS + ASYNC_CALLS + DATA_FLOWS + CALLS + OVERRIDE */
     }
     for (int i = 0; i < n_defaults; i++) {
         out_types[i] = defaults[i];
@@ -2280,6 +2286,9 @@ static yyjson_mut_val *bfs_to_json_array(yyjson_mut_doc *doc, cbm_traverse_resul
         yyjson_mut_obj_add_str(
             doc, item, "qualified_name",
             tr->visited[i].node.qualified_name ? tr->visited[i].node.qualified_name : "");
+        if (tr->visited[i].node.label) {
+            yyjson_mut_obj_add_str(doc, item, "label", tr->visited[i].node.label);
+        }
         yyjson_mut_obj_add_int(doc, item, "hop", tr->visited[i].hop);
         if (risk_labels) {
             yyjson_mut_obj_add_str(doc, item, "risk",

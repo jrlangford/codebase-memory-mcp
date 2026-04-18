@@ -666,6 +666,33 @@ static int register_and_link_def(cbm_pipeline_ctx_t *ctx, const CBMDefinition *d
     free(file_qn);
     if (def->parent_class && strcmp(def->label, "Method") == 0) {
         const cbm_gbuf_node_t *parent = cbm_gbuf_find_by_qn(ctx->gbuf, def->parent_class);
+        /* Go cross-file fallback: method may be in a different file from its struct.
+         * If QN lookup failed, search for a Class node with the receiver type name. */
+        if (!parent && def->receiver) {
+            const char *r = def->receiver;
+            while (*r == '(' || *r == ' ') r++;
+            while (*r && *r != ' ' && *r != '*' && *r != ')') r++;
+            while (*r == ' ' || *r == '*') r++;
+            const char *end = r;
+            while (*end && *end != ')' && *end != ' ' && *end != '[') end++;
+            if (end > r) {
+                char recv_type[CBM_SZ_256];
+                size_t len = (size_t)(end - r);
+                if (len < sizeof(recv_type)) {
+                    memcpy(recv_type, r, len);
+                    recv_type[len] = '\0';
+                    const cbm_gbuf_node_t **candidates = NULL;
+                    int n = 0;
+                    cbm_gbuf_find_by_name(ctx->gbuf, recv_type, &candidates, &n);
+                    for (int k = 0; k < n; k++) {
+                        if (candidates[k]->label && strcmp(candidates[k]->label, "Class") == 0) {
+                            parent = candidates[k];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         if (parent && def_node) {
             cbm_gbuf_insert_edge(ctx->gbuf, parent->id, def_node->id, "DEFINES_METHOD", "{}");
         }
@@ -1231,6 +1258,70 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, CB
     }
 }
 
+/* Resolve LSP-provided calls for one file. These have type-aware resolution
+ * (e.g., Go interface dispatch) and override text-based calls when both exist
+ * for the same source→target pair. */
+static void resolve_file_lsp_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws,
+                                   CBMFileResult *result, const char *rel) {
+    for (int c = 0; c < result->resolved_calls.count; c++) {
+        CBMResolvedCall *lsp = &result->resolved_calls.items[c];
+        if (!lsp->caller_qn || !lsp->callee_qn) {
+            continue;
+        }
+        const cbm_gbuf_node_t *source = cbm_gbuf_find_by_qn(rc->main_gbuf, lsp->caller_qn);
+        if (!source) {
+            source = find_source_node(rc->main_gbuf, rc->project_name, rel, lsp->caller_qn);
+        }
+        const cbm_gbuf_node_t *target = cbm_gbuf_find_by_qn(rc->main_gbuf, lsp->callee_qn);
+        if (!source || !target || source->id == target->id) {
+            continue;
+        }
+
+        /* Check if a CALLS edge already exists between source and target.
+         * If so, skip — the text-based edge is fine. If not, create one.
+         * (LSP calls often resolve to the correct target where text-based
+         * resolution picked the wrong one due to name collision.) */
+        const cbm_gbuf_edge_t **existing = NULL;
+        int existing_count = 0;
+        cbm_gbuf_find_edges_by_source_type(ws->local_edge_buf, source->id, "CALLS", &existing,
+                                           &existing_count);
+        bool already_exists = false;
+        for (int e = 0; e < existing_count; e++) {
+            if (existing[e]->target_id == target->id) {
+                already_exists = true;
+                break;
+            }
+        }
+        if (already_exists) {
+            continue;
+        }
+
+        /* Also check the main gbuf for existing edges from prior passes. */
+        existing = NULL;
+        existing_count = 0;
+        cbm_gbuf_find_edges_by_source_type(rc->main_gbuf, source->id, "CALLS", &existing,
+                                           &existing_count);
+        for (int e = 0; e < existing_count; e++) {
+            if (existing[e]->target_id == target->id) {
+                already_exists = true;
+                break;
+            }
+        }
+        if (already_exists) {
+            continue;
+        }
+
+        char esc_callee[CBM_SZ_256];
+        cbm_json_escape(esc_callee, sizeof(esc_callee), lsp->callee_qn);
+        char props[CBM_SZ_512];
+        snprintf(props, sizeof(props),
+                 "{\"callee\":\"%s\",\"confidence\":%.2f,\"strategy\":\"%s\"}", esc_callee,
+                 (double)lsp->confidence, lsp->strategy ? lsp->strategy : "lsp");
+        cbm_gbuf_insert_edge(ws->local_edge_buf, source->id, target->id, "CALLS", props);
+        ws->calls_resolved++;
+    }
+}
+
 /* Resolve usages for one file. */
 static void resolve_file_usages(resolve_ctx_t *rc, resolve_worker_state_t *ws,
                                 CBMFileResult *result, const char *rel, const char *module_qn,
@@ -1442,6 +1533,9 @@ static void resolve_worker(int worker_id, void *ctx_ptr) {
 
         /* ── CALLS resolution ──────────────────────────────────── */
         resolve_file_calls(rc, ws, result, rel, module_qn, imp_keys, imp_vals, imp_count);
+
+        /* ── LSP-resolved CALLS (type-aware, overrides text-based) ── */
+        resolve_file_lsp_calls(rc, ws, result, rel);
 
         /* ── USAGE resolution ──────────────────────────────────── */
         resolve_file_usages(rc, ws, result, rel, module_qn, imp_keys, imp_vals, imp_count);

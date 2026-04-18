@@ -1468,7 +1468,39 @@ static void process_function(GoLSPContext* ctx, TSNode func_node) {
     char* func_name = lsp_node_text(ctx, name_node);
     if (!func_name || !func_name[0]) return;
 
-    ctx->enclosing_func_qn = cbm_arena_sprintf(ctx->arena, "%s.%s", ctx->package_qn, func_name);
+    /* For methods, include receiver type in QN to match extract_defs.c QN format:
+     * package.ReceiverType.MethodName instead of package.MethodName. */
+    TSNode recv_check = ts_node_child_by_field_name(func_node, "receiver", 8);
+    if (!ts_node_is_null(recv_check)) {
+        /* Parse receiver type name from the parameter_declaration inside receiver. */
+        uint32_t rnc = ts_node_child_count(recv_check);
+        const char *recv_type_name = NULL;
+        for (uint32_t ri = 0; ri < rnc && !recv_type_name; ri++) {
+            TSNode rp = ts_node_child(recv_check, ri);
+            if (ts_node_is_null(rp) || !ts_node_is_named(rp)) continue;
+            if (strcmp(ts_node_type(rp), "parameter_declaration") != 0) continue;
+            TSNode rtype = ts_node_child_by_field_name(rp, "type", 4);
+            if (ts_node_is_null(rtype)) continue;
+            /* Unwrap pointer_type: *T → T */
+            if (strcmp(ts_node_type(rtype), "pointer_type") == 0) {
+                rtype = ts_node_child(rtype, 1); /* skip '*' */
+                if (ts_node_is_null(rtype)) continue;
+            }
+            if (strcmp(ts_node_type(rtype), "type_identifier") == 0) {
+                recv_type_name = lsp_node_text(ctx, rtype);
+            }
+        }
+        if (recv_type_name) {
+            ctx->enclosing_func_qn = cbm_arena_sprintf(ctx->arena, "%s.%s.%s",
+                                                       ctx->package_qn, recv_type_name, func_name);
+        } else {
+            ctx->enclosing_func_qn = cbm_arena_sprintf(ctx->arena, "%s.%s",
+                                                       ctx->package_qn, func_name);
+        }
+    } else {
+        ctx->enclosing_func_qn = cbm_arena_sprintf(ctx->arena, "%s.%s",
+                                                   ctx->package_qn, func_name);
+    }
 
     // Push function scope
     CBMScope* saved_scope = ctx->current_scope;
