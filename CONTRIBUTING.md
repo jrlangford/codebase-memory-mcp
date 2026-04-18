@@ -70,6 +70,23 @@ scripts/            Build, test, lint, security audit scripts
 tests/              All C test files
 ```
 
+## Re-indexing After Binary Changes
+
+`index_repository` uses an incremental pipeline that compares stored file hashes against the current tree. If nothing in the source changed, the call is a no-op — even if the `codebase-memory-mcp` binary has been updated with new extraction logic.
+
+**Consequence**: after a binary change that alters graph output (new edge types, changed QN format, extractor bug fix, etc.), re-running `index_repository` on an unchanged source tree will *not* rebuild the graph. The previous binary's output remains frozen in the per-project DB.
+
+**To force a full rebuild**:
+
+```bash
+codebase-memory-mcp cli delete_project '{"project":"<project-name>"}'
+codebase-memory-mcp cli index_repository '{"repo_path":"<absolute-path>"}'
+```
+
+`delete_project` wipes the stored file hashes, so the next `index_repository` call treats every file as changed and re-extracts from scratch.
+
+Project data lives in `~/.cache/codebase-memory-mcp/<project-name>.db`, one file per project. The project name is the absolute repo path with `/` → `-`. All MCP subprocesses on a host read/write this shared directory, so a forced rebuild from one client is visible to every concurrent MCP session on the next query.
+
 ## Adding or Fixing Language Support
 
 Language support is split between two layers:

@@ -112,6 +112,47 @@ static const char *compute_func_qn(CBMExtractCtx *ctx, TSNode node, const CBMLan
     if (state->enclosing_class_qn) {
         return cbm_arena_sprintf(ctx->arena, "%s.%s", state->enclosing_class_qn, name);
     }
+
+    // Go method: receiver is a sibling field on method_declaration, not an ancestor scope.
+    // Must match the receiver-aware QN that extract_func_def sets on the Method node,
+    // otherwise CALLS source-node lookup misses and falls back to the file node.
+    //
+    // INVARIANT: see extract_defs.c extract_func_def — four method-QN writers must agree.
+    if (ctx->language == CBM_LANG_GO) {
+        TSNode recv = ts_node_child_by_field_name(node, TS_FIELD("receiver"));
+        if (!ts_node_is_null(recv)) {
+            uint32_t rnc = ts_node_child_count(recv);
+            const char *recv_type_name = NULL;
+            for (uint32_t ri = 0; ri < rnc && !recv_type_name; ri++) {
+                TSNode rp = ts_node_child(recv, ri);
+                if (ts_node_is_null(rp) || !ts_node_is_named(rp)) {
+                    continue;
+                }
+                if (strcmp(ts_node_type(rp), "parameter_declaration") != 0) {
+                    continue;
+                }
+                TSNode rtype = ts_node_child_by_field_name(rp, TS_FIELD("type"));
+                if (ts_node_is_null(rtype)) {
+                    continue;
+                }
+                if (strcmp(ts_node_type(rtype), "pointer_type") == 0) {
+                    rtype = ts_node_child(rtype, 1);
+                    if (ts_node_is_null(rtype)) {
+                        continue;
+                    }
+                }
+                if (strcmp(ts_node_type(rtype), "type_identifier") == 0) {
+                    recv_type_name = cbm_node_text(ctx->arena, rtype, ctx->source);
+                }
+            }
+            if (recv_type_name && recv_type_name[0]) {
+                const char *class_qn = cbm_fqn_compute(ctx->arena, ctx->project, ctx->rel_path,
+                                                        recv_type_name);
+                return cbm_arena_sprintf(ctx->arena, "%s.%s", class_qn, name);
+            }
+        }
+    }
+
     return cbm_fqn_compute(ctx->arena, ctx->project, ctx->rel_path, name);
 }
 
