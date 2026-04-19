@@ -855,6 +855,33 @@ static bool is_project_db_file(const char *name, size_t len) {
     return true;
 }
 
+/* Run `git -C <root> rev-parse HEAD` and write the hash to out.
+ * Returns 0 on success, CBM_NOT_FOUND if root_path is empty, not a git repo,
+ * or git is not installed. */
+static int mcp_git_head(const char *root_path, char *out, size_t out_size) {
+    if (!root_path || !*root_path || out_size == 0) {
+        return CBM_NOT_FOUND;
+    }
+    char cmd[CBM_SZ_1K];
+    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse HEAD 2>/dev/null", root_path);
+    FILE *fp = cbm_popen(cmd, "r");
+    if (!fp) {
+        return CBM_NOT_FOUND;
+    }
+    int ok = CBM_NOT_FOUND;
+    if (fgets(out, (int)out_size, fp)) {
+        size_t len = strlen(out);
+        while (len > 0 && (out[len - SKIP_ONE] == '\n' || out[len - SKIP_ONE] == '\r')) {
+            out[--len] = '\0';
+        }
+        if (len > 0) {
+            ok = 0;
+        }
+    }
+    cbm_pclose(fp);
+    return ok;
+}
+
 /* Open a .db file briefly, collect node/edge counts and root_path,
  * then append a JSON entry to arr. */
 static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
@@ -884,9 +911,13 @@ static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, c
         cbm_store_close(pstore);
     }
 
+    char commit_buf[CBM_SZ_64] = "";
+    mcp_git_head(root_path_buf, commit_buf, sizeof(commit_buf));
+
     yyjson_mut_val *p = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_strcpy(doc, p, "name", project_name);
     yyjson_mut_obj_add_strcpy(doc, p, "root_path", root_path_buf);
+    yyjson_mut_obj_add_strcpy(doc, p, "commit", commit_buf);
     yyjson_mut_obj_add_int(doc, p, "nodes", nodes);
     yyjson_mut_obj_add_int(doc, p, "edges", edges);
     yyjson_mut_obj_add_int(doc, p, "size_bytes", (int64_t)st->st_size);

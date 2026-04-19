@@ -17,7 +17,9 @@ import { FilterPanel } from "./FilterPanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
-import type { GraphNode, GraphData } from "../lib/types";
+import { callTool } from "../api/rpc";
+import { shortProjectName } from "../lib/projectName";
+import type { GraphNode, GraphData, Project } from "../lib/types";
 
 /* Persist panel widths */
 function loadWidth(key: string, fallback: number): number {
@@ -63,6 +65,7 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
   const [showToggles, setShowToggles] = useState(() => loadBool("cbm-show-toggles", true));
+  const [projectCommit, setProjectCommit] = useState<string | null>(null);
 
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
@@ -86,6 +89,27 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [screenshotMode, onToggleScreenshotMode]);
+
+  /* Resolve the indexed commit for the current project — shown in screenshot overlay */
+  useEffect(() => {
+    if (!project) {
+      setProjectCommit(null);
+      return;
+    }
+    let cancelled = false;
+    callTool<{ projects: Project[] }>("list_projects")
+      .then((r) => {
+        if (cancelled) return;
+        const match = r.projects?.find((p) => p.name === project);
+        setProjectCommit(match?.commit ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectCommit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
 
   /* Compute filtered data */
   const filteredData: GraphData | null = useMemo(() => {
@@ -479,6 +503,24 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
           >
             esc to exit
           </button>
+        )}
+
+        {/* Screenshot-mode identity overlay — project name + indexed commit */}
+        {screenshotMode && project && (
+          <div
+            data-testid="screenshot-identity"
+            className="absolute bottom-3 left-3 px-3 py-1.5 text-[11px] font-mono rounded border border-white/10 bg-black/40 text-white/70 backdrop-blur-sm flex items-center gap-2"
+          >
+            <span className="text-white/90">{shortProjectName(project)}</span>
+            {projectCommit && (
+              <>
+                <span className="text-white/20">·</span>
+                <span className="text-white/50" title={projectCommit}>
+                  {projectCommit.slice(0, 7)}
+                </span>
+              </>
+            )}
+          </div>
         )}
       </div>
 

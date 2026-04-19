@@ -28,6 +28,7 @@ export interface Project {
   name: string;
   root_path: string;
   indexed_at: string;
+  commit?: string;
 }
 
 export interface SchemaInfo {
