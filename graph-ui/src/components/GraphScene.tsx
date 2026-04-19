@@ -18,7 +18,13 @@ interface CameraTarget {
   lookAt: THREE.Vector3;
 }
 
-function CameraAnimator({ target }: { target: CameraTarget | null }) {
+function CameraAnimator({
+  target,
+  controlsRef,
+}: {
+  target: CameraTarget | null;
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+}) {
   const { camera } = useThree();
   const targetRef = useRef<CameraTarget | null>(null);
   const progress = useRef(1);
@@ -36,8 +42,17 @@ function CameraAnimator({ target }: { target: CameraTarget | null }) {
     progress.current = Math.min(1, progress.current + 0.02);
     const t = 1 - Math.pow(1 - progress.current, 3); /* ease-out cubic */
 
+    /* OrbitControls writes camera.position every frame from its own
+     * (target, spherical) state, so we must also animate its target
+     * and call update() — otherwise our lerp is clobbered and the
+     * camera never reaches the fit target. */
     camera.position.lerp(targetRef.current.position, t * 0.08);
-    camera.lookAt(targetRef.current.lookAt);
+    if (controlsRef.current) {
+      controlsRef.current.target.lerp(targetRef.current.lookAt, t * 0.08);
+      controlsRef.current.update();
+    } else {
+      camera.lookAt(targetRef.current.lookAt);
+    }
   });
 
   return null;
@@ -156,7 +171,7 @@ export function GraphScene({
 
       {/* <Axes /> */}
 
-      <CameraAnimator target={cameraTarget} />
+      <CameraAnimator target={cameraTarget} controlsRef={controlsRef} />
       <IdleAutoRotate controlsRef={controlsRef} />
       <ExposeGlobals controlsRef={controlsRef} />
 

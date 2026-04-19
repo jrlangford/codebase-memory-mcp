@@ -127,6 +127,43 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
     return { nodes, edges, total_nodes: data.total_nodes };
   }, [data, enabledLabels, enabledEdgeTypes]);
 
+  /* Auto-fit when entering screenshot mode — the canvas resizes (sidebars
+   * disappear), so aspect/framing must be recomputed against the new
+   * canvas dimensions. Snap directly (bypassing CameraAnimator) because
+   * OrbitControls overwrites lerped camera.position each frame — safest
+   * path is to assign camera.position + controls.target and update(). */
+  useEffect(() => {
+    if (!screenshotMode || !filteredData) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    const t = window.setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));
+      raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => {
+          const target = computeFitAllTarget(filteredData.nodes);
+          if (!target) return;
+          const w = window as unknown as {
+            _camera?: { position: { copy: (v: unknown) => unknown } };
+            _controls?: {
+              target: { copy: (v: unknown) => unknown };
+              update: () => void;
+            };
+          };
+          if (w._camera && w._controls) {
+            w._camera.position.copy(target.position);
+            w._controls.target.copy(target.lookAt);
+            w._controls.update();
+          }
+        });
+      });
+    }, 350);
+    return () => {
+      window.clearTimeout(t);
+      if (raf1) window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+    };
+  }, [screenshotMode, filteredData]);
+
   useEffect(() => {
     if (project) {
       fetchOverview(project, { clusterMode, colorMode, optimize, graphMode });
