@@ -45,9 +45,11 @@ function saveBool(key: string, value: boolean) {
 
 interface GraphTabProps {
   project: string | null;
+  screenshotMode?: boolean;
+  onToggleScreenshotMode?: () => void;
 }
 
-export function GraphTab({ project }: GraphTabProps) {
+export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMode }: GraphTabProps) {
   const { data, loading, error, fetchOverview } = useGraphData();
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -74,6 +76,16 @@ export function GraphTab({ project }: GraphTabProps) {
     setEnabledLabels(labels);
     setEnabledEdgeTypes(types);
   }, [data]);
+
+  /* Esc exits screenshot mode */
+  useEffect(() => {
+    if (!screenshotMode || !onToggleScreenshotMode) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onToggleScreenshotMode();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [screenshotMode, onToggleScreenshotMode]);
 
   /* Compute filtered data */
   const filteredData: GraphData | null = useMemo(() => {
@@ -223,38 +235,42 @@ export function GraphTab({ project }: GraphTabProps) {
 
   return (
     <div className="h-full flex">
-      {/* Left sidebar — resizable */}
-      <div
-        className="border-r border-border/30 flex flex-col h-full bg-[#0b1920]/90 backdrop-blur-md shrink-0"
-        style={{ width: leftWidth }}
-      >
-        <FilterPanel
-          data={data}
-          enabledLabels={enabledLabels}
-          enabledEdgeTypes={enabledEdgeTypes}
-          showLabels={showLabels}
-          onToggleLabel={toggleLabel}
-          onToggleEdgeType={toggleEdgeType}
-          onToggleShowLabels={() => setShowLabels((v) => !v)}
-          onEnableAll={enableAll}
-          onDisableAll={disableAll}
-        />
-        <Sidebar
-          nodes={filteredData.nodes}
-          onSelectPath={handleSelectPath}
-          selectedPath={selectedPath}
-        />
-      </div>
-      <ResizeHandle
-        side="left"
-        onResize={(d) => {
-          setLeftWidth((w) => {
-            const nw = Math.max(150, Math.min(500, w + d));
-            saveWidth("cbm-left-w", nw);
-            return nw;
-          });
-        }}
-      />
+      {/* Left sidebar — resizable. Hidden in screenshot mode. */}
+      {!screenshotMode && (
+        <>
+          <div
+            className="border-r border-border/30 flex flex-col h-full bg-[#0b1920]/90 backdrop-blur-md shrink-0"
+            style={{ width: leftWidth }}
+          >
+            <FilterPanel
+              data={data}
+              enabledLabels={enabledLabels}
+              enabledEdgeTypes={enabledEdgeTypes}
+              showLabels={showLabels}
+              onToggleLabel={toggleLabel}
+              onToggleEdgeType={toggleEdgeType}
+              onToggleShowLabels={() => setShowLabels((v) => !v)}
+              onEnableAll={enableAll}
+              onDisableAll={disableAll}
+            />
+            <Sidebar
+              nodes={filteredData.nodes}
+              onSelectPath={handleSelectPath}
+              selectedPath={selectedPath}
+            />
+          </div>
+          <ResizeHandle
+            side="left"
+            onResize={(d) => {
+              setLeftWidth((w) => {
+                const nw = Math.max(150, Math.min(500, w + d));
+                saveWidth("cbm-left-w", nw);
+                return nw;
+              });
+            }}
+          />
+        </>
+      )}
 
       {/* Graph area */}
       <div className="flex-1 relative overflow-hidden">
@@ -268,7 +284,8 @@ export function GraphTab({ project }: GraphTabProps) {
           />
         </ErrorBoundary>
 
-        {/* HUD */}
+        {/* HUD — hidden in screenshot mode */}
+        {!screenshotMode && (
         <div className="absolute top-4 left-4 text-[11px] text-white/30 pointer-events-none font-mono">
           <p>
             {filteredData.nodes.length.toLocaleString()} nodes /{" "}
@@ -288,7 +305,10 @@ export function GraphTab({ project }: GraphTabProps) {
             </p>
           )}
         </div>
+        )}
 
+        {/* Toggle cluster — hidden in screenshot mode */}
+        {!screenshotMode && (
         <div className="absolute top-4 right-4 flex gap-2">
           {/* Collapse/expand the toggle cluster */}
           <button
@@ -437,11 +457,33 @@ export function GraphTab({ project }: GraphTabProps) {
           >
             Refresh
           </Button>
+          {onToggleScreenshotMode && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onToggleScreenshotMode}
+              title="Hide all UI chrome for a clean graph screenshot (Esc to exit)"
+            >
+              ◳ Clean
+            </Button>
+          )}
         </div>
+        )}
+
+        {/* Screenshot-mode exit affordance — only visible in screenshot mode */}
+        {screenshotMode && onToggleScreenshotMode && (
+          <button
+            onClick={onToggleScreenshotMode}
+            className="absolute bottom-3 right-3 px-2 py-1 text-[10px] font-mono rounded border border-white/10 bg-black/40 text-white/30 hover:text-white/70 hover:bg-black/60 transition-colors backdrop-blur-sm"
+            title="Exit screenshot mode"
+          >
+            esc to exit
+          </button>
+        )}
       </div>
 
-      {/* Right detail panel — resizable */}
-      {selectedNode && filteredData && (
+      {/* Right detail panel — resizable. Hidden in screenshot mode. */}
+      {!screenshotMode && selectedNode && filteredData && (
         <>
           <ResizeHandle
             side="right"

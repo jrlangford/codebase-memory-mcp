@@ -14,10 +14,12 @@ const TABS: { id: TabId; label: string }[] = [
 export function App() {
   const [activeTab, setActiveTab] = useState<TabId>("stats");
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [screenshotMode, setScreenshotMode] = useState(false);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
-      {/* Header */}
+      {/* Header — hidden in screenshot mode */}
+      {!screenshotMode && (
       <header className="flex items-center justify-between px-5 h-12 border-b border-border bg-[#0b1920]/80 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
@@ -63,11 +65,16 @@ export function App() {
           </div>
         )}
       </header>
+      )}
 
       {/* Content */}
       <main className="flex-1 min-h-0">
         {activeTab === "graph" ? (
-          <GraphTab project={selectedProject} />
+          <GraphTab
+            project={selectedProject}
+            screenshotMode={screenshotMode}
+            onToggleScreenshotMode={() => setScreenshotMode((v) => !v)}
+          />
         ) : activeTab === "control" ? (
           <ControlTab />
         ) : (
