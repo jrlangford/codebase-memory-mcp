@@ -494,17 +494,6 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
         </div>
         )}
 
-        {/* Screenshot-mode exit affordance — only visible in screenshot mode */}
-        {screenshotMode && onToggleScreenshotMode && (
-          <button
-            onClick={onToggleScreenshotMode}
-            className="absolute bottom-3 right-3 px-2 py-1 text-[10px] font-mono rounded border border-white/10 bg-black/40 text-white/30 hover:text-white/70 hover:bg-black/60 transition-colors backdrop-blur-sm"
-            title="Exit screenshot mode"
-          >
-            esc to exit
-          </button>
-        )}
-
         {/* Screenshot-mode identity overlay — project name + indexed commit */}
         {screenshotMode && project && (
           <div
