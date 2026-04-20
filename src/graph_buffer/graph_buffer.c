@@ -604,6 +604,33 @@ const cbm_gbuf_node_t *cbm_gbuf_find_by_qn(const cbm_gbuf_t *gb, const char *qn)
     return cbm_ht_get(gb->node_by_qn, qn);
 }
 
+int cbm_gbuf_relabel_node(cbm_gbuf_t *gb, const char *qn, const char *new_label) {
+    if (!gb || !qn || !new_label) {
+        return -1;
+    }
+    cbm_gbuf_node_t *node = cbm_ht_get(gb->node_by_qn, qn);
+    if (!node) {
+        return -1;
+    }
+    const char *old = node->label ? node->label : "";
+    if (strcmp(old, new_label) == 0) {
+        return 0;
+    }
+    /* Remove from old label bucket. */
+    remove_node_from_ptr_array(cbm_ht_get(gb->nodes_by_label, old), node->id);
+    /* Swap in the new label (heap-owned). */
+    char *dup = heap_strdup(new_label);
+    if (!dup) {
+        return -1;
+    }
+    free(node->label);
+    node->label = dup;
+    /* Add to new label bucket. */
+    node_ptr_array_t *by_label = get_or_create_node_array(gb->nodes_by_label, node->label);
+    cbm_da_push(by_label, (const cbm_gbuf_node_t *)node);
+    return 0;
+}
+
 const cbm_gbuf_node_t *cbm_gbuf_find_by_id(const cbm_gbuf_t *gb, int64_t id) {
     if (!gb) {
         return NULL;

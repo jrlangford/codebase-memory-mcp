@@ -26,32 +26,42 @@ function CameraAnimator({
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
 }) {
   const { camera } = useThree();
+  const startPos = useRef(new THREE.Vector3());
+  const startLookAt = useRef(new THREE.Vector3());
   const targetRef = useRef<CameraTarget | null>(null);
   const progress = useRef(1);
 
   useEffect(() => {
     if (target) {
+      startPos.current.copy(camera.position);
+      startLookAt.current.copy(
+        controlsRef.current?.target ?? new THREE.Vector3(0, 0, 0),
+      );
       targetRef.current = target;
       progress.current = 0;
     }
-  }, [target]);
+  }, [target, camera, controlsRef]);
 
   useFrame(() => {
     if (!targetRef.current || progress.current >= 1) return;
 
-    progress.current = Math.min(1, progress.current + 0.02);
+    progress.current = Math.min(1, progress.current + 0.025);
     const t = 1 - Math.pow(1 - progress.current, 3); /* ease-out cubic */
 
-    /* OrbitControls writes camera.position every frame from its own
-     * (target, spherical) state, so we must also animate its target
-     * and call update() — otherwise our lerp is clobbered and the
-     * camera never reaches the fit target. */
-    camera.position.lerp(targetRef.current.position, t * 0.08);
-    if (controlsRef.current) {
-      controlsRef.current.target.lerp(targetRef.current.lookAt, t * 0.08);
-      controlsRef.current.update();
-    } else {
-      camera.lookAt(targetRef.current.lookAt);
+    camera.position.lerpVectors(startPos.current, targetRef.current.position, t);
+
+    const controls = controlsRef.current;
+    if (controls) {
+      controls.target.lerpVectors(startLookAt.current, targetRef.current.lookAt, t);
+      controls.update();
+    }
+
+    if (progress.current >= 1) {
+      camera.position.copy(targetRef.current.position);
+      if (controls) {
+        controls.target.copy(targetRef.current.lookAt);
+        controls.update();
+      }
     }
   });
 

@@ -62,6 +62,7 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
   const [colorMode, setColorMode] = useState<ColorMode>("stellar");
   const [optimize, setOptimize] = useState<boolean>(false);
   const [graphMode, setGraphMode] = useState<GraphMode>("raw");
+  const [isolateByEdge, setIsolateByEdge] = useState<boolean>(false);
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
   const [showToggles, setShowToggles] = useState(() => loadBool("cbm-show-toggles", true));
@@ -115,7 +116,7 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
   const filteredData: GraphData | null = useMemo(() => {
     if (!data) return null;
 
-    const nodes = data.nodes.filter((n) => enabledLabels.has(n.label));
+    let nodes = data.nodes.filter((n) => enabledLabels.has(n.label));
     const nodeIds = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter(
       (e) =>
@@ -124,8 +125,17 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
         nodeIds.has(e.target),
     );
 
+    if (isolateByEdge) {
+      const connectedIds = new Set<number>();
+      for (const e of edges) {
+        connectedIds.add(e.source);
+        connectedIds.add(e.target);
+      }
+      nodes = nodes.filter((n) => connectedIds.has(n.id));
+    }
+
     return { nodes, edges, total_nodes: data.total_nodes };
-  }, [data, enabledLabels, enabledEdgeTypes]);
+  }, [data, enabledLabels, enabledEdgeTypes, isolateByEdge]);
 
   /* Auto-fit when entering screenshot mode — the canvas resizes (sidebars
    * disappear), so aspect/framing must be recomputed against the new
@@ -370,7 +380,7 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
 
         {/* Toggle cluster — hidden in screenshot mode */}
         {!screenshotMode && (
-        <div className="absolute top-4 right-4 flex gap-2">
+        <div className="absolute top-4 right-4 flex gap-2 pointer-events-none [&_button]:pointer-events-auto [&_a]:pointer-events-auto">
           {/* Collapse/expand the toggle cluster */}
           <button
             onClick={() => {
@@ -478,6 +488,24 @@ export function GraphTab({ project, screenshotMode = false, onToggleScreenshotMo
               }
             >
               {optimize ? "Force: on" : "Force: off"}
+            </button>
+          </div>
+          {/* Isolate toggle: hide nodes not connected by any visible edge type */}
+          <div className="flex rounded-lg overflow-hidden border border-border/30">
+            <button
+              onClick={() => setIsolateByEdge(!isolateByEdge)}
+              className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                isolateByEdge
+                  ? "bg-primary/20 text-primary"
+                  : "bg-white/[0.03] text-white/40 hover:text-white/60"
+              }`}
+              title={
+                isolateByEdge
+                  ? "Isolate ON — only showing nodes with visible edges. Click to show all."
+                  : "Isolate OFF — all nodes visible. Click to hide nodes without visible edges."
+              }
+            >
+              {isolateByEdge ? "Isolate: on" : "Isolate: off"}
             </button>
           </div>
             </>

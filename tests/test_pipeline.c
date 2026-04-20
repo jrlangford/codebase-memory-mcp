@@ -1290,6 +1290,237 @@ TEST(pipeline_python_cross_module_call) {
     PASS();
 }
 
+/* ── BehaviourDoc frontmatter tests ────────────────────────────── */
+
+/* Helper: free an array of heap-allocated strings. */
+static void free_str_array(char **arr, int n) {
+    for (int i = 0; i < n; i++) {
+        free(arr[i]);
+    }
+}
+
+TEST(behaviourdoc_frontmatter_parse_basic) {
+    const char *src =
+        "---\n"
+        "specifies:\n"
+        "  - qn: \"a.b.c.Foo\"\n"
+        "  - qn: \"a.b.c.Bar\"\n"
+        "prescribes:\n"
+        "  - qn: \"a.b.c_test.Test_Foo\"\n"
+        "---\n"
+        "# Body\n";
+    char *spec[8] = {0};
+    char *pres[8] = {0};
+    int ns = 0, np = 0;
+    int rc = cbm_pipeline_behaviourdoc_parse_for_test(src, (int)strlen(src), spec, &ns, pres, &np,
+                                                     8);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(ns, 2);
+    ASSERT_EQ(np, 1);
+    ASSERT_STR_EQ(spec[0], "a.b.c.Foo");
+    ASSERT_STR_EQ(spec[1], "a.b.c.Bar");
+    ASSERT_STR_EQ(pres[0], "a.b.c_test.Test_Foo");
+    free_str_array(spec, ns);
+    free_str_array(pres, np);
+    PASS();
+}
+
+TEST(behaviourdoc_frontmatter_parse_bare_strings) {
+    /* Legacy / shorthand: list item is a plain string without "qn:" key. */
+    const char *src =
+        "---\n"
+        "specifies:\n"
+        "  - a.b.c.Foo\n"
+        "prescribes:\n"
+        "  - a.b.c_test.Test_Foo\n"
+        "---\n";
+    char *spec[4] = {0};
+    char *pres[4] = {0};
+    int ns = 0, np = 0;
+    int rc = cbm_pipeline_behaviourdoc_parse_for_test(src, (int)strlen(src), spec, &ns, pres, &np,
+                                                     4);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(ns, 1);
+    ASSERT_EQ(np, 1);
+    ASSERT_STR_EQ(spec[0], "a.b.c.Foo");
+    ASSERT_STR_EQ(pres[0], "a.b.c_test.Test_Foo");
+    free_str_array(spec, ns);
+    free_str_array(pres, np);
+    PASS();
+}
+
+TEST(behaviourdoc_frontmatter_no_block) {
+    const char *src = "# A regular markdown file.\n\nNo frontmatter here.\n";
+    char *spec[4] = {0};
+    char *pres[4] = {0};
+    int ns = 0, np = 0;
+    int rc = cbm_pipeline_behaviourdoc_parse_for_test(src, (int)strlen(src), spec, &ns, pres, &np,
+                                                     4);
+    ASSERT_EQ(rc, -1);
+    ASSERT_EQ(ns, 0);
+    ASSERT_EQ(np, 0);
+    PASS();
+}
+
+TEST(behaviourdoc_frontmatter_other_keys_ignored) {
+    const char *src =
+        "---\n"
+        "title: \"Some Doc\"\n"
+        "author: bob\n"
+        "specifies:\n"
+        "  - qn: \"a.b.c.Foo\"\n"
+        "tags:\n"
+        "  - behaviour\n"
+        "---\n";
+    char *spec[4] = {0};
+    char *pres[4] = {0};
+    int ns = 0, np = 0;
+    int rc = cbm_pipeline_behaviourdoc_parse_for_test(src, (int)strlen(src), spec, &ns, pres, &np,
+                                                     4);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(ns, 1);
+    ASSERT_EQ(np, 0);
+    ASSERT_STR_EQ(spec[0], "a.b.c.Foo");
+    free_str_array(spec, ns);
+    free_str_array(pres, np);
+    PASS();
+}
+
+TEST(pipeline_behaviourdoc_promotes_and_emits_edges) {
+    /* End-to-end: index a tiny Go project + markdown BehaviourDoc and
+     * verify the doc gets :BehaviourDoc label with SPECIFIES + PRESCRIBES
+     * edges to the right code nodes. */
+    const char *files[] = {
+        "pkg/service.go",
+        "pkg/service_test.go",
+        "docs/behaviour/service.md",
+    };
+    const char *contents[] = {
+        "package pkg\n\nfunc Serve() {}\n",
+        "package pkg\n\nfunc Test_Serve() {}\n",
+        "---\n"
+        "specifies:\n"
+        "  - qn: \"pkg.service.Serve\"\n"
+        "prescribes:\n"
+        "  - qn: \"pkg.service_test.Test_Serve\"\n"
+        "---\n"
+        "# Service behaviour\n"
+        "Describes how `Serve` behaves.\n",
+    };
+
+    if (setup_lang_repo(files, contents, 3) != 0)
+        SKIP("tmpdir");
+    char db[512];
+    snprintf(db, sizeof(db), "%s/test.db", g_lang_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_lang_tmpdir, db, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+
+    cbm_store_t *s = cbm_store_open_path(db);
+    ASSERT_NOT_NULL(s);
+    const char *proj = cbm_pipeline_project_name(p);
+
+    /* BehaviourDoc node created (by label). */
+    cbm_node_t *bd = NULL;
+    int bdc = 0;
+    cbm_store_find_nodes_by_label(s, proj, "BehaviourDoc", &bd, &bdc);
+    ASSERT_EQ(bdc, 1);
+
+    /* Serve exists as a Function. */
+    cbm_node_t *serve = NULL;
+    int nc = 0;
+    cbm_store_find_nodes_by_name(s, proj, "Serve", &serve, &nc);
+    ASSERT_GT(nc, 0);
+
+    /* Test_Serve exists. */
+    cbm_node_t *test = NULL;
+    int tc = 0;
+    cbm_store_find_nodes_by_name(s, proj, "Test_Serve", &test, &tc);
+    ASSERT_GT(tc, 0);
+
+    /* SPECIFIES edge from BehaviourDoc → Serve. */
+    cbm_edge_t *spec_edges = NULL;
+    int sec = 0;
+    cbm_store_find_edges_by_source_type(s, bd[0].id, "SPECIFIES", &spec_edges, &sec);
+    bool found_specifies = false;
+    for (int i = 0; i < sec; i++) {
+        if (spec_edges[i].target_id == serve[0].id) {
+            found_specifies = true;
+        }
+    }
+    ASSERT_TRUE(found_specifies);
+
+    /* PRESCRIBES edge from BehaviourDoc → Test_Serve. */
+    cbm_edge_t *pres_edges = NULL;
+    int pec = 0;
+    cbm_store_find_edges_by_source_type(s, bd[0].id, "PRESCRIBES", &pres_edges, &pec);
+    bool found_prescribes = false;
+    for (int i = 0; i < pec; i++) {
+        if (pres_edges[i].target_id == test[0].id) {
+            found_prescribes = true;
+        }
+    }
+    ASSERT_TRUE(found_prescribes);
+
+    /* The old Module-with-same-QN should be gone (promoted away). */
+    cbm_node_t *modules = NULL;
+    int mc = 0;
+    cbm_store_find_nodes_by_label(s, proj, "Module", &modules, &mc);
+    for (int i = 0; i < mc; i++) {
+        ASSERT_TRUE(modules[i].qualified_name == NULL ||
+                    strstr(modules[i].qualified_name, ".docs.behaviour.service") == NULL);
+    }
+
+    cbm_store_free_edges(spec_edges, sec);
+    cbm_store_free_edges(pres_edges, pec);
+    cbm_store_free_nodes(bd, bdc);
+    cbm_store_free_nodes(serve, nc);
+    cbm_store_free_nodes(test, tc);
+    cbm_store_free_nodes(modules, mc);
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_lang_repo();
+    PASS();
+}
+
+TEST(pipeline_mdlinks_emits_references_edge) {
+    /* Regression test for the DOCUMENTS → REFERENCES rename. A plain
+     * markdown file with an inline link to a source file should produce
+     * a REFERENCES edge (not DOCUMENTS). */
+    const char *files[] = {
+        "pkg/service.go",
+        "docs/service.md",
+    };
+    const char *contents[] = {
+        "package pkg\n\nfunc Serve() {}\n",
+        "# Service\n\nSee [Serve](../pkg/service.go).\n",
+    };
+
+    if (setup_lang_repo(files, contents, 2) != 0)
+        SKIP("tmpdir");
+    char db[512];
+    snprintf(db, sizeof(db), "%s/test.db", g_lang_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_lang_tmpdir, db, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+
+    cbm_store_t *s = cbm_store_open_path(db);
+    ASSERT_NOT_NULL(s);
+    const char *proj = cbm_pipeline_project_name(p);
+
+    int ref_count = cbm_store_count_edges_by_type(s, proj, "REFERENCES");
+    int doc_count = cbm_store_count_edges_by_type(s, proj, "DOCUMENTS");
+    ASSERT_GT(ref_count, 0);
+    ASSERT_EQ(doc_count, 0);
+
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_lang_repo();
+    PASS();
+}
+
 TEST(pipeline_go_type_classification) {
     /* Port of TestGoTypeClassification */
     const char *files[] = {"types.go"};
@@ -5217,6 +5448,13 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_python_project);
     RUN_TEST(pipeline_go_cross_package_call);
     RUN_TEST(pipeline_python_cross_module_call);
+    /* BehaviourDoc tests — frontmatter parser + full-pipeline edges */
+    RUN_TEST(behaviourdoc_frontmatter_parse_basic);
+    RUN_TEST(behaviourdoc_frontmatter_parse_bare_strings);
+    RUN_TEST(behaviourdoc_frontmatter_no_block);
+    RUN_TEST(behaviourdoc_frontmatter_other_keys_ignored);
+    RUN_TEST(pipeline_behaviourdoc_promotes_and_emits_edges);
+    RUN_TEST(pipeline_mdlinks_emits_references_edge);
     RUN_TEST(pipeline_go_type_classification);
     RUN_TEST(pipeline_go_grouped_types);
     RUN_TEST(pipeline_kotlin_project);

@@ -81,6 +81,11 @@ const cbm_gbuf_node_t *cbm_gbuf_find_by_qn(const cbm_gbuf_t *gb, const char *qn)
 /* Find a node by temp ID. Returns NULL if not found. */
 const cbm_gbuf_node_t *cbm_gbuf_find_by_id(const cbm_gbuf_t *gb, int64_t id);
 
+/* Change the label of an existing node, keeping its ID, edges, and other
+ * fields intact. Updates the nodes_by_label secondary index.
+ * Returns 0 on success, -1 if the node does not exist. */
+int cbm_gbuf_relabel_node(cbm_gbuf_t *gb, const char *qn, const char *new_label);
+
 /* Find nodes by label. Sets *out and *count. Caller does NOT free.
  * Returns 0 on success, -1 on error. */
 int cbm_gbuf_find_by_label(const cbm_gbuf_t *gb, const char *label, const cbm_gbuf_node_t ***out,

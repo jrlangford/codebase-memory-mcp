@@ -129,6 +129,8 @@ static float size_for_label(const char *label) {
         return 15.0f;
     if (strcmp(label, "Module") == 0)
         return 15.0f;
+    if (strcmp(label, "BehaviourDoc") == 0)
+        return 12.0f;
     if (strcmp(label, "Folder") == 0)
         return 12.0f;
     if (strcmp(label, "File") == 0)
