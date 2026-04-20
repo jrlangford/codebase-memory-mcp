@@ -24,7 +24,7 @@ const EDGE_TYPE_COLORS: Record<string, string> = {
   CONTAINS_FOLDER: "#22c55e",
   CONTAINS_PACKAGE: "#22c55e",
   HANDLES: "#eab308",
-  IMPLEMENTS: "#f97316",
+  IMPLEMENTS: "#7dd3fc",
   HTTP_CALLS: "#e11d48",
   ASYNC_CALLS: "#ec4899",
   MEMBER_OF: "#64748b",
