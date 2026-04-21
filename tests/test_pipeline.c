@@ -1484,6 +1484,76 @@ TEST(pipeline_behaviourdoc_promotes_and_emits_edges) {
     PASS();
 }
 
+TEST(pipeline_behaviourdoc_unresolved_qn_does_not_crash) {
+    /* Regression: pass_behaviourdoc used to crash when a specifies/prescribes
+     * QN could not be resolved against the graph. The cbm_log_warn calls on
+     * the unresolved branches passed an odd number of variadic args, so the
+     * lone NULL sentinel was consumed as a value and the next va_arg read
+     * off the end of the arg list, producing a bad pointer for snprintf's
+     * %s format. This triggered on any real project where a BehaviourDoc
+     * specified a QN the parser got wrong (e.g. omitting an enclosing class
+     * name). This test exercises the same path with a tiny repo: two QNs
+     * that DO resolve and a third that does not, plus one unresolved
+     * prescribes QN. Must complete without SIGSEGV. */
+    const char *files[] = {
+        "pkg/service.go",
+        "pkg/service_test.go",
+        "docs/behaviour/service.md",
+    };
+    const char *contents[] = {
+        "package pkg\n\nfunc Serve() {}\n",
+        "package pkg\n\nfunc Test_Serve() {}\n",
+        "---\n"
+        "specifies:\n"
+        "  - qn: \"pkg.service.Serve\"\n"
+        "  - qn: \"pkg.service.DoesNotExist\"\n"
+        "prescribes:\n"
+        "  - qn: \"pkg.service_test.MissingTest\"\n"
+        "---\n"
+        "# Service behaviour\n",
+    };
+
+    if (setup_lang_repo(files, contents, 3) != 0)
+        SKIP("tmpdir");
+    char db[512];
+    snprintf(db, sizeof(db), "%s/test.db", g_lang_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_lang_tmpdir, db, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    /* Before the fix this call SIGSEGV'd inside cbm_log's snprintf. */
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+
+    cbm_store_t *s = cbm_store_open_path(db);
+    ASSERT_NOT_NULL(s);
+    const char *proj = cbm_pipeline_project_name(p);
+
+    /* The doc still gets promoted because at least one QN resolved. */
+    cbm_node_t *bd = NULL;
+    int bdc = 0;
+    cbm_store_find_nodes_by_label(s, proj, "BehaviourDoc", &bd, &bdc);
+    ASSERT_EQ(bdc, 1);
+
+    /* Only the resolvable SPECIFIES edge was emitted. */
+    cbm_edge_t *spec_edges = NULL;
+    int sec = 0;
+    cbm_store_find_edges_by_source_type(s, bd[0].id, "SPECIFIES", &spec_edges, &sec);
+    ASSERT_EQ(sec, 1);
+
+    /* The unresolved PRESCRIBES QN produced no edge. */
+    cbm_edge_t *pres_edges = NULL;
+    int pec = 0;
+    cbm_store_find_edges_by_source_type(s, bd[0].id, "PRESCRIBES", &pres_edges, &pec);
+    ASSERT_EQ(pec, 0);
+
+    cbm_store_free_edges(spec_edges, sec);
+    cbm_store_free_edges(pres_edges, pec);
+    cbm_store_free_nodes(bd, bdc);
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_lang_repo();
+    PASS();
+}
+
 TEST(pipeline_mdlinks_emits_references_edge) {
     /* Regression test for the DOCUMENTS → REFERENCES rename. A plain
      * markdown file with an inline link to a source file should produce
@@ -5454,6 +5524,7 @@ SUITE(pipeline) {
     RUN_TEST(behaviourdoc_frontmatter_no_block);
     RUN_TEST(behaviourdoc_frontmatter_other_keys_ignored);
     RUN_TEST(pipeline_behaviourdoc_promotes_and_emits_edges);
+    RUN_TEST(pipeline_behaviourdoc_unresolved_qn_does_not_crash);
     RUN_TEST(pipeline_mdlinks_emits_references_edge);
     RUN_TEST(pipeline_go_type_classification);
     RUN_TEST(pipeline_go_grouped_types);

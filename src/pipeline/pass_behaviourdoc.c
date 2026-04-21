@@ -429,7 +429,7 @@ int cbm_pipeline_pass_behaviourdoc(cbm_pipeline_ctx_t *ctx, const cbm_file_info_
                 specifies_edges++;
             } else {
                 unresolved++;
-                cbm_log_warn("pass.behaviourdoc", "unresolved_specifies", "doc",
+                cbm_log_warn("pass.behaviourdoc", "event", "unresolved_specifies", "doc",
                              files[fi].rel_path, "qn", fm.qns_specifies[i]);
             }
         }
@@ -442,15 +442,15 @@ int cbm_pipeline_pass_behaviourdoc(cbm_pipeline_ctx_t *ctx, const cbm_file_info_
                 const cbm_gbuf_node_t *tn = cbm_gbuf_find_by_id(ctx->gbuf, tgt);
                 if (tn && tn->label &&
                     strcmp(tn->label, "Function") != 0 && strcmp(tn->label, "Method") != 0) {
-                    cbm_log_warn("pass.behaviourdoc", "prescribes_non_function", "doc",
-                                 files[fi].rel_path, "qn", fm.qns_prescribes[i], "label",
-                                 tn->label);
+                    cbm_log_warn("pass.behaviourdoc", "event", "prescribes_non_function",
+                                 "doc", files[fi].rel_path, "qn", fm.qns_prescribes[i],
+                                 "label", tn->label);
                 }
                 cbm_gbuf_insert_edge(ctx->gbuf, src_id, tgt, "PRESCRIBES", "{}");
                 prescribes_edges++;
             } else {
                 unresolved++;
-                cbm_log_warn("pass.behaviourdoc", "unresolved_prescribes", "doc",
+                cbm_log_warn("pass.behaviourdoc", "event", "unresolved_prescribes", "doc",
                              files[fi].rel_path, "qn", fm.qns_prescribes[i]);
             }
         }
