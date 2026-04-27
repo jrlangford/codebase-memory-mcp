@@ -17,6 +17,7 @@ extern void suite_hash_table(void);
 extern void suite_dyn_array(void);
 extern void suite_str_intern(void);
 extern void suite_log(void);
+extern void suite_signals(void);
 extern void suite_str_util(void);
 extern void suite_platform(void);
 extern void suite_extraction(void);
@@ -65,6 +66,7 @@ int main(void) {
     RUN_SUITE(dyn_array);
     RUN_SUITE(str_intern);
     RUN_SUITE(log);
+    RUN_SUITE(signals);
     RUN_SUITE(str_util);
     RUN_SUITE(platform);
 

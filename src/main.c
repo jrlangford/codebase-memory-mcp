@@ -37,6 +37,7 @@ enum {
 #include "foundation/compat_thread.h"
 #include "foundation/mem.h"
 #include "foundation/profile.h"
+#include "foundation/signals.h"
 #include "ui/config.h"
 #include "ui/http_server.h"
 #include "ui/embedded_assets.h"
@@ -57,6 +58,15 @@ static cbm_watcher_t *g_watcher = NULL;
 static cbm_mcp_server_t *g_server = NULL;
 static cbm_http_server_t *g_http_server = NULL;
 static atomic_int g_shutdown = 0;
+
+/* Log sink that tees structured log lines to both stderr and the UI ring
+ * buffer. The ring sink alone is exclusive — without the stderr leg, the
+ * MCP supervisor (and operators tailing the server's stderr) cannot see
+ * any logs after main() registers the sink. */
+static void log_tee_ui_and_stderr(const char *line) {
+    (void)fprintf(stderr, "%s\n", line);
+    cbm_ui_log_append(line);
+}
 
 static void signal_handler(int sig) {
     (void)sig;
@@ -279,12 +289,15 @@ int main(int argc, char **argv) {
     }
 
     /* Default: MCP server on stdio */
+    cbm_signals_install(); /* SIGPIPE-ignore + fatal-signal handlers; install
+                            * before any IO so a closed client pipe at startup
+                            * cannot silently kill us. */
     cbm_mem_init(MAIN_RAM_FRACTION); /* 50% of RAM — safe now because mimalloc tracks ALL
                                       * memory (C + C++ allocations) via global override.
                                       * No more untracked heap blind spots. */
     /* Store binary path for subprocess spawning + hook log sink */
     cbm_http_server_set_binary_path(argv[0]);
-    cbm_log_set_sink(cbm_ui_log_append);
+    cbm_log_set_sink(log_tee_ui_and_stderr);
     cbm_log_info("server.start", "version", CBM_VERSION);
     cbm_diag_start(); /* starts if CBM_DIAGNOSTICS=1 */
 

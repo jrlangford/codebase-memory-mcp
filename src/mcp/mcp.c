@@ -52,6 +52,7 @@ enum {
 #include "foundation/compat_fs.h"
 #include "foundation/compat_thread.h"
 #include "foundation/log.h"
+#include "foundation/signals.h"
 #include "foundation/str_util.h"
 #include "foundation/compat_regex.h"
 
@@ -63,6 +64,7 @@ enum {
 #include <fcntl.h>
 #endif
 #include <yyjson/yyjson.h>
+#include <errno.h>
 #include <stdint.h> // int64_t
 #include <stdio.h>
 #include <stdlib.h>
@@ -4229,6 +4231,10 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
         char *tool_args =
             req.params_raw ? cbm_mcp_get_arguments(req.params_raw) : heap_strdup("{}");
 
+        const char *tool_label = tool_name ? tool_name : "?";
+        cbm_signals_set_current_tool(tool_label);
+        cbm_log_info("tool.start", "name", tool_label);
+
         struct timespec t0;
         cbm_clock_gettime(CLOCK_MONOTONIC, &t0);
         result_json = cbm_mcp_handle_tool(srv, tool_name, tool_args);
@@ -4238,6 +4244,13 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
                            ((long long)(t1.tv_nsec - t0.tv_nsec) / MCP_MS_TO_US);
         bool is_err = (result_json != NULL) && (strstr(result_json, "\"isError\":true") != NULL);
         cbm_diag_record_query(dur_us, is_err);
+
+        long long dur_ms = dur_us / MCP_MS_TO_US;
+        char dur_buf[32];
+        snprintf(dur_buf, sizeof(dur_buf), "%lld", dur_ms);
+        cbm_log_info("tool.end", "name", tool_label, "duration_ms", dur_buf, "status",
+                     is_err ? "err" : "ok");
+        cbm_signals_clear_current_tool();
 
         result_json = inject_update_notice(srv, result_json);
         free(tool_name);
@@ -4289,6 +4302,24 @@ static void handle_content_length_frame(cbm_mcp_server_t *srv, FILE *in, FILE *o
         (void)fflush(out);
         free(resp);
     }
+}
+
+/* Returns true when stdout is no longer writable (EPIPE / closed client).
+ * Called after fflush; logs once and lets the caller break the loop. */
+static bool stdout_broken(FILE *out) {
+    if (!ferror(out)) {
+        return false;
+    }
+#ifdef EPIPE
+    if (errno == EPIPE) {
+        cbm_log_warn("server.client_pipe_closed", "errno", "EPIPE");
+        clearerr(out);
+        return true;
+    }
+#endif
+    cbm_log_warn("server.stdout_error", "errno", strerror(errno));
+    clearerr(out);
+    return true;
 }
 
 #ifndef _WIN32
@@ -4420,6 +4451,9 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
             (void)fprintf(out, "%s\n", resp);
             (void)fflush(out);
             free(resp);
+            if (stdout_broken(out)) {
+                break;
+            }
         }
     }
 
