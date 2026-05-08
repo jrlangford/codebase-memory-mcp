@@ -241,14 +241,93 @@ static const char *local_rel_path(const char *rel_path, const char *local_prefix
     return rel_path;
 }
 
+/* BehaviourDoc carve-out — see beads-j5cq.
+ *
+ * In non-FULL modes, FAST_SKIP_DIRS drops "docs"/"doc"/"documentation" at
+ * discovery time, which kills BehaviourDoc extraction because markdown
+ * files under docs/behaviour/ never reach pass_behaviourdoc. The carve-out
+ * keeps the docs/ root and the behaviour/ + behavior/ subtrees, while
+ * still skipping every other child of docs/ to preserve the perf
+ * characteristic the FAST_SKIP_DIRS rule was added for.
+ *
+ * Both spellings are kept: kairos uses British (docs/behaviour/), poseidon
+ * uses American (docs/behavior/). */
+
+static const char *DOCS_ROOT_NAMES[] = {"docs", "doc", "documentation", NULL};
+static const char *BEHAVIOUR_LEAF_NAMES[] = {"behaviour", "behavior", NULL};
+
+static bool entry_in_list(const char *entry, const char *const list[]) {
+    if (!entry) {
+        return false;
+    }
+    for (int i = 0; list[i]; i++) {
+        if (strcmp(entry, list[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* True iff rel_path equals one of the docs roots (no subpath). */
+static bool path_is_docs_root(const char *rel_path) {
+    return entry_in_list(rel_path, DOCS_ROOT_NAMES);
+}
+
+/* True iff rel_path is "<docs-root>/<behaviour-leaf>" or any descendant of it. */
+static bool path_under_behaviour_doc(const char *rel_path) {
+    if (!rel_path) {
+        return false;
+    }
+    for (int i = 0; DOCS_ROOT_NAMES[i]; i++) {
+        size_t rlen = strlen(DOCS_ROOT_NAMES[i]);
+        if (strncmp(rel_path, DOCS_ROOT_NAMES[i], rlen) != 0 || rel_path[rlen] != '/') {
+            continue;
+        }
+        const char *after = rel_path + rlen + 1;
+        for (int j = 0; BEHAVIOUR_LEAF_NAMES[j]; j++) {
+            size_t llen = strlen(BEHAVIOUR_LEAF_NAMES[j]);
+            if (strncmp(after, BEHAVIOUR_LEAF_NAMES[j], llen) == 0 &&
+                (after[llen] == '\0' || after[llen] == '/')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* True iff rel_path is "<docs-root>/<X>" where X is not a behaviour leaf,
+ * or any descendant. Used to keep the FAST_SKIP_DIRS perf characteristic
+ * inside docs/ even though docs/ itself is no longer pruned. */
+static bool path_under_docs_non_behaviour(const char *rel_path) {
+    if (!rel_path || path_under_behaviour_doc(rel_path)) {
+        return false;
+    }
+    for (int i = 0; DOCS_ROOT_NAMES[i]; i++) {
+        size_t rlen = strlen(DOCS_ROOT_NAMES[i]);
+        if (strncmp(rel_path, DOCS_ROOT_NAMES[i], rlen) == 0 && rel_path[rlen] == '/') {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Check if a directory entry should be skipped (hardcoded dirs + gitignore). */
 static bool should_skip_directory(const char *entry_name, const char *rel_path,
                                   const cbm_discover_opts_t *opts, const cbm_gitignore_t *gitignore,
                                   const cbm_gitignore_t *cbmignore, const cbm_gitignore_t *local_gi,
                                   const char *local_gi_prefix) {
-    if (cbm_should_skip_dir(entry_name, opts ? opts->mode : CBM_MODE_FULL)) {
+    cbm_index_mode_t mode = opts ? opts->mode : CBM_MODE_FULL;
+
+    /* BehaviourDoc carve-out applies to non-FULL modes only; FULL never
+     * consulted FAST_SKIP_DIRS, so its behavior is unchanged. */
+    if (mode != CBM_MODE_FULL && (path_is_docs_root(rel_path) || path_under_behaviour_doc(rel_path))) {
+        /* Fall through to gitignore checks; do not consult FAST_SKIP_DIRS. */
+    } else if (mode != CBM_MODE_FULL && path_under_docs_non_behaviour(rel_path)) {
+        return true;
+    } else if (cbm_should_skip_dir(entry_name, mode)) {
         return true;
     }
+
     if (gitignore && cbm_gitignore_matches(gitignore, rel_path, true)) {
         return true;
     }
