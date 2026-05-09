@@ -669,6 +669,184 @@ TEST(discover_nested_gitignore_stacks_with_root) {
     PASS();
 }
 
+/* ── BehaviourDoc carve-out (beads-j5cq) ────────────────────────── */
+
+/* In moderate/fast modes docs/ is normally pruned by FAST_SKIP_DIRS. The
+ * carve-out keeps docs/ + docs/behaviour/ + docs/behavior/ so pass_behaviourdoc
+ * can extract SPECIFIES/PRESCRIBES from the markdown frontmatter. Other
+ * children of docs/ stay pruned so the perf benefit of the rule is preserved. */
+TEST(discover_keeps_docs_behaviour_in_moderate) {
+    char *base = th_mktempdir("cbm_disc_bd_brit");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "docs/behaviour/priority_order.md"),
+                  "---\nspecifies:\n  - qn: foo\n---\nbody\n");
+    th_write_file(TH_PATH(base, "docs/api-reference/intro.md"), "# Intro\n");
+
+    cbm_discover_opts_t opts = {0};
+    opts.mode = CBM_MODE_MODERATE;
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found_behaviour_md = false;
+    bool found_api_ref = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "docs/behaviour/priority_order.md")) {
+            found_behaviour_md = true;
+        }
+        if (strstr(files[i].rel_path, "docs/api-reference")) {
+            found_api_ref = true;
+        }
+    }
+    ASSERT_TRUE(found_behaviour_md);
+    ASSERT_FALSE(found_api_ref);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+TEST(discover_keeps_docs_behavior_american_in_moderate) {
+    char *base = th_mktempdir("cbm_disc_bd_amer");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "docs/behavior/launch.md"),
+                  "---\nspecifies:\n  - qn: bar\n---\nbody\n");
+
+    cbm_discover_opts_t opts = {0};
+    opts.mode = CBM_MODE_MODERATE;
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "docs/behavior/launch.md")) {
+            found = true;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+/* Behavior docs nested under behaviour/ subdirectories (e.g. docs/behaviour/cases/foo.md). */
+TEST(discover_keeps_docs_behaviour_nested) {
+    char *base = th_mktempdir("cbm_disc_bd_nest");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "docs/behaviour/cases/order.md"),
+                  "---\nspecifies:\n  - qn: baz\n---\nbody\n");
+
+    cbm_discover_opts_t opts = {0};
+    opts.mode = CBM_MODE_MODERATE;
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "docs/behaviour/cases/order.md")) {
+            found = true;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+/* Other children of docs/ remain skipped (perf characteristic preserved). */
+TEST(discover_skips_non_behaviour_children_of_docs_in_moderate) {
+    char *base = th_mktempdir("cbm_disc_bd_other");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "docs/tutorial/01.md"), "tutorial\n");
+    th_write_file(TH_PATH(base, "docs/reference/api.md"), "ref\n");
+    th_write_file(TH_PATH(base, "docs/behaviour/keep.md"),
+                  "---\nspecifies:\n  - qn: q\n---\n");
+
+    cbm_discover_opts_t opts = {0};
+    opts.mode = CBM_MODE_MODERATE;
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found_tutorial = false;
+    bool found_reference = false;
+    bool found_behaviour = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "docs/tutorial/")) {
+            found_tutorial = true;
+        }
+        if (strstr(files[i].rel_path, "docs/reference/")) {
+            found_reference = true;
+        }
+        if (strstr(files[i].rel_path, "docs/behaviour/keep.md")) {
+            found_behaviour = true;
+        }
+    }
+    ASSERT_FALSE(found_tutorial);
+    ASSERT_FALSE(found_reference);
+    ASSERT_TRUE(found_behaviour);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+/* Full mode keeps docs/ entirely as it always did. */
+TEST(discover_keeps_all_docs_in_full_mode) {
+    char *base = th_mktempdir("cbm_disc_bd_full");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "docs/tutorial/01.md"), "tutorial\n");
+    th_write_file(TH_PATH(base, "docs/behaviour/foo.md"),
+                  "---\nspecifies:\n  - qn: q\n---\n");
+
+    cbm_discover_opts_t opts = {0};
+    opts.mode = CBM_MODE_FULL;
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found_tutorial = false;
+    bool found_behaviour = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "docs/tutorial/01.md")) {
+            found_tutorial = true;
+        }
+        if (strstr(files[i].rel_path, "docs/behaviour/foo.md")) {
+            found_behaviour = true;
+        }
+    }
+    ASSERT_TRUE(found_tutorial);
+    ASSERT_TRUE(found_behaviour);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
 /* ── Suite ─────────────────────────────────────────────────────── */
 
 SUITE(discover) {
@@ -761,4 +939,11 @@ SUITE(discover) {
     /* Nested .gitignore tests (issue #178) */
     RUN_TEST(discover_nested_gitignore);
     RUN_TEST(discover_nested_gitignore_stacks_with_root);
+
+    /* BehaviourDoc carve-out (beads-j5cq) */
+    RUN_TEST(discover_keeps_docs_behaviour_in_moderate);
+    RUN_TEST(discover_keeps_docs_behavior_american_in_moderate);
+    RUN_TEST(discover_keeps_docs_behaviour_nested);
+    RUN_TEST(discover_skips_non_behaviour_children_of_docs_in_moderate);
+    RUN_TEST(discover_keeps_all_docs_in_full_mode);
 }
