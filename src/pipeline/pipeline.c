@@ -820,7 +820,7 @@ int cbm_pipeline_run(cbm_pipeline_t *p) {
     cbm_discover_opts_t opts = {
         .mode = p->mode,
         .ignore_file = NULL,
-        .max_file_size = 0,
+        .max_file_size = CBM_DEFAULT_MAX_FILE_SIZE, /* 2MB backstop (beads-gwfeg) */
     };
     cbm_file_info_t *files = NULL;
     int file_count = 0;

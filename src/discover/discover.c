@@ -15,6 +15,7 @@
 #include "foundation/compat_fs.h"
 #include <stdint.h> // int64_t
 #include <stdio.h>
+#include <strings.h> // strcasecmp
 #include <stdlib.h>
 #include <string.h> // strdup
 #include <sys/stat.h>
@@ -343,6 +344,18 @@ static bool should_skip_directory(const char *entry_name, const char *rel_path,
     return false;
 }
 
+/* True for bulk-data-dump extensions whose large instances have ~zero graph
+ * value and hang the tree-sitter extractor (beads-gwfeg). .csv/.tsv aren't
+ * extracted languages today, but capping them here is harmless + future-proof. */
+static bool is_bulk_data_ext(const char *name) {
+    const char *dot = strrchr(name, '.');
+    if (!dot) {
+        return false;
+    }
+    return strcasecmp(dot, ".sql") == 0 || strcasecmp(dot, ".csv") == 0 ||
+           strcasecmp(dot, ".tsv") == 0 || strcasecmp(dot, ".ndjson") == 0;
+}
+
 /* Check if a regular file should be skipped (filters + gitignore + size). */
 static bool should_skip_file(const char *entry_name, const char *rel_path,
                              const cbm_discover_opts_t *opts, const cbm_gitignore_t *gitignore,
@@ -368,6 +381,12 @@ static bool should_skip_file(const char *entry_name, const char *rel_path,
         }
     }
     if (cbmignore && cbm_gitignore_matches(cbmignore, rel_path, false)) {
+        return true;
+    }
+    /* Bulk data-dump files: skip aggressively above the low data cap — a large
+     * .sql/.csv dump has ~zero graph value and hangs the extractor (beads-gwfeg).
+     * Small schema files (e.g. an 11KB schema.sql) stay under the cap and index. */
+    if (file_size > CBM_DATA_FILE_MAX_SIZE && is_bulk_data_ext(entry_name)) {
         return true;
     }
     if (opts && opts->max_file_size > 0 && file_size > opts->max_file_size) {
