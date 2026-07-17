@@ -904,6 +904,29 @@ TEST(python_decorator) {
     PASS();
 }
 
+TEST(python_decorated_methods) {
+    /* Regression (beads-yrnw): @classmethod/@staticmethod methods parse as a
+     * decorated_definition wrapping the function_definition. The class-method
+     * walk must unwrap the decorator, else the method is silently dropped (no
+     * Method node) — which breaks both a BehaviourDoc's SPECIFIES target and any
+     * inbound test/call edges. The plain method must remain present (the fix is
+     * additive). Fails against the old extractor, passes against the new. */
+    CBMFileResult *r = extract("class Headers:\n"
+                               "    def plain(self):\n        return 1\n"
+                               "    @classmethod\n    def from_dict(cls, data):\n        "
+                               "return cls()\n"
+                               "    @staticmethod\n    def is_valid(v):\n        return True\n",
+                               CBM_LANG_PYTHON, "t", "headers.py");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Class", "Headers"));
+    ASSERT(has_def(r, "Method", "plain"));     /* additive: plain method unaffected */
+    ASSERT(has_def(r, "Method", "from_dict")); /* @classmethod now indexed */
+    ASSERT(has_def(r, "Method", "is_valid"));  /* @staticmethod now indexed */
+    cbm_free_result(r);
+    PASS();
+}
+
 /* --- TypeScript interface --- */
 TEST(ts_interface) {
     CBMFileResult *r = extract("export interface Repository<T> { findById(id: number): T; "
@@ -2224,6 +2247,7 @@ SUITE(extraction) {
     RUN_TEST(verilog_module);
     RUN_TEST(cuda_kernel);
     RUN_TEST(python_decorator);
+    RUN_TEST(python_decorated_methods);
     RUN_TEST(ts_interface);
     RUN_TEST(tsx_component);
     RUN_TEST(lua_table_method);

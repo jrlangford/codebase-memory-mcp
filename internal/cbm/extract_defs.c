@@ -2129,6 +2129,25 @@ static void extract_class_methods(CBMExtractCtx *ctx, TSNode class_node, const c
             continue;
         }
 
+        // Unwrap a decorated_definition (Python @classmethod/@staticmethod/@property/
+        // etc.) to its inner function definition so decorated methods still get a
+        // Method node. Without this the decorated_definition child fails the
+        // function_node_types check below and the method is silently dropped —
+        // breaking both its SPECIFIES target and any inbound test/call edges. Additive:
+        // plain methods are unaffected; only previously-skipped decorated methods are
+        // now emitted. The "decorated_definition" kind is Python-specific, so the
+        // strcmp naturally scopes this to Python without a language guard.
+        if (strcmp(ts_node_type(child), "decorated_definition") == 0) {
+            uint32_t dcount = ts_node_child_count(child);
+            for (uint32_t di = 0; di < dcount; di++) {
+                TSNode inner = ts_node_child(child, di);
+                if (cbm_kind_in_set(inner, spec->function_node_types)) {
+                    child = inner;
+                    break;
+                }
+            }
+        }
+
         if (!cbm_kind_in_set(child, spec->function_node_types)) {
             continue;
         }
