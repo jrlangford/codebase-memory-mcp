@@ -173,6 +173,12 @@ int cbm_gbuf_store_token_vector(cbm_gbuf_t *gb, const char *token, const uint8_t
  * Returns 0 on success, -1 on error. */
 int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path);
 
+/* Test seam (beads-tm8ib): the incremental persist's on-disk dump goes through
+ * this indirection so tests can simulate a persist failure and assert the prior
+ * DB is preserved (atomic temp+rename). Defaults to cbm_gbuf_dump_to_sqlite;
+ * production code never reassigns it. */
+extern int (*cbm_incremental_dump_fn)(cbm_gbuf_t *gb, const char *path);
+
 /* Flush the buffer to an existing store via the store API.
  * Deletes existing project data first. Returns 0 on success. */
 int cbm_gbuf_flush_to_store(cbm_gbuf_t *gb, cbm_store_t *store);

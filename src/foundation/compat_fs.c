@@ -141,6 +141,13 @@ int cbm_unlink(const char *path) {
     return _unlink(path);
 }
 
+int cbm_rename(const char *from, const char *to) {
+    /* MOVEFILE_REPLACE_EXISTING makes this overwrite the destination; the move is
+     * atomic when source and destination are on the same volume. Return 0 on
+     * success to match POSIX rename(). */
+    return MoveFileEx(from, to, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
+}
+
 int cbm_rmdir(const char *path) {
     return _rmdir(path);
 }
@@ -250,6 +257,12 @@ bool cbm_mkdir_p(const char *path, int mode) {
 
 int cbm_unlink(const char *path) {
     return unlink(path);
+}
+
+int cbm_rename(const char *from, const char *to) {
+    /* POSIX rename() atomically replaces an existing destination on the same
+     * filesystem. Returns 0 on success. */
+    return rename(from, to);
 }
 
 int cbm_rmdir(const char *path) {

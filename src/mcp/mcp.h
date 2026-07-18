@@ -52,6 +52,12 @@ char *cbm_jsonrpc_format_error(int64_t id, int code, const char *message);
 /* Format an MCP tool result with text content. Returns heap-allocated JSON. */
 char *cbm_mcp_text_result(const char *text, bool is_error);
 
+/* Build the index_repository result JSON and set *out_is_error. store==NULL after
+ * rc==0 means the DB did not persist → status="error" + isError (beads-or4e7).
+ * Exposed for unit testing the persist-failure path. Returns heap-allocated JSON. */
+char *cbm_mcp_build_index_result(const char *project_name, const char *repo_path, int rc,
+                                 cbm_store_t *store, bool *out_is_error);
+
 /* Format the tools/list response. Returns heap-allocated JSON. */
 char *cbm_mcp_tools_list(void);
 

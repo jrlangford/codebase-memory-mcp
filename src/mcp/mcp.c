@@ -2541,6 +2541,60 @@ static char *get_project_root(cbm_mcp_server_t *srv, const char *project) {
 
 /* ── index_repository ─────────────────────────────────────────── */
 
+/* Build the index_repository JSON result and set *out_is_error.
+ *
+ * store==NULL after a successful pipeline (rc==0) means the DB did not persist —
+ * resolve_store's integrity check may have unlinked it, or the project is absent.
+ * That must surface as status="error" + isError, not a silent "indexed" over a
+ * deleted DB (beads-or4e7). Non-static so it can be unit-tested with store==NULL
+ * (the exact integrity-delete state) without inducing a real integrity failure. */
+char *cbm_mcp_build_index_result(const char *project_name, const char *repo_path, int rc,
+                                 cbm_store_t *store, bool *out_is_error) {
+    bool index_ok = (rc == 0) && (store != NULL);
+    if (out_is_error) {
+        *out_is_error = !index_ok;
+    }
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    yyjson_mut_obj_add_str(doc, root, "project", project_name);
+    yyjson_mut_obj_add_str(doc, root, "status", index_ok ? "indexed" : "error");
+
+    if (rc == 0 && store == NULL) {
+        yyjson_mut_obj_add_str(
+            doc, root, "error",
+            "index reported success but the database did not persist "
+            "(integrity check failed or project missing) — re-index required");
+    }
+
+    if (store) {
+        int nodes = cbm_store_count_nodes(store, project_name);
+        int edges = cbm_store_count_edges(store, project_name);
+        yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
+        yyjson_mut_obj_add_int(doc, root, "edges", edges);
+
+        /* Check ADR presence and suggest creation if missing */
+        char adr_path[CBM_SZ_4K];
+        snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", repo_path);
+        struct stat adr_st;
+        bool adr_exists = (stat(adr_path, &adr_st) == 0);
+        yyjson_mut_obj_add_bool(doc, root, "adr_present", adr_exists);
+        if (!adr_exists) {
+            yyjson_mut_obj_add_str(
+                doc, root, "adr_hint",
+                "Project indexed. Consider creating an Architecture Decision Record: "
+                "explore the codebase with get_architecture(aspects=['all']), then use "
+                "manage_adr(mode='store') to persist architectural insights across sessions.");
+        }
+    }
+
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
 static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     char *repo_path = cbm_mcp_get_string_arg(args, "repo_path");
     char *mode_str = cbm_mcp_get_string_arg(args, "mode");
@@ -2591,43 +2645,16 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     free(srv->current_project);
     srv->current_project = NULL;
 
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root);
-
-    yyjson_mut_obj_add_str(doc, root, "project", project_name);
-    yyjson_mut_obj_add_str(doc, root, "status", rc == 0 ? "indexed" : "error");
-
-    if (rc == 0) {
-        cbm_store_t *store = resolve_store(srv, project_name);
-        if (store) {
-            int nodes = cbm_store_count_nodes(store, project_name);
-            int edges = cbm_store_count_edges(store, project_name);
-            yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
-            yyjson_mut_obj_add_int(doc, root, "edges", edges);
-
-            /* Check ADR presence and suggest creation if missing */
-            char adr_path[CBM_SZ_4K];
-            snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", repo_path);
-            struct stat adr_st;
-            bool adr_exists = (stat(adr_path, &adr_st) == 0);
-            yyjson_mut_obj_add_bool(doc, root, "adr_present", adr_exists);
-            if (!adr_exists) {
-                yyjson_mut_obj_add_str(
-                    doc, root, "adr_hint",
-                    "Project indexed. Consider creating an Architecture Decision Record: "
-                    "explore the codebase with get_architecture(aspects=['all']), then use "
-                    "manage_adr(mode='store') to persist architectural insights across sessions.");
-            }
-        }
-    }
-
-    char *json = yy_doc_to_str(doc);
-    yyjson_mut_doc_free(doc);
+    /* A rc==0 pipeline can still fail to persist: resolve_store runs the integrity
+     * check and may unlink the just-written DB, returning NULL. Fold that into the
+     * result so we never report "indexed" over a vanished DB (beads-or4e7). */
+    cbm_store_t *store = (rc == 0) ? resolve_store(srv, project_name) : NULL;
+    bool is_error = false;
+    char *json = cbm_mcp_build_index_result(project_name, repo_path, rc, store, &is_error);
     free(project_name);
     free(repo_path);
 
-    char *result = cbm_mcp_text_result(json, rc != 0);
+    char *result = cbm_mcp_text_result(json, is_error);
     free(json);
     return result;
 }

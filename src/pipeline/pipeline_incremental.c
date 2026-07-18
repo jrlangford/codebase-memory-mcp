@@ -256,44 +256,97 @@ static void run_postpasses(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_fil
                      itoa_buf((int)elapsed_ms(t)));
     }
 }
-/* Delete old DB and dump merged graph + hashes to disk. */
-static void dump_and_persist(cbm_gbuf_t *gbuf, const char *db_path, const char *project,
-                             cbm_file_info_t *files, int file_count) {
+/* Test seam (beads-tm8ib): the on-disk dump goes through this indirection so
+ * tests can simulate a persist failure and assert the prior DB survives.
+ * Production never reassigns it. */
+int (*cbm_incremental_dump_fn)(cbm_gbuf_t *, const char *) = cbm_gbuf_dump_to_sqlite;
+
+/* Atomically persist the merged graph + hashes to disk (beads-tm8ib).
+ *
+ * Builds a complete fresh DB at "<db_path>.tmp", then renames it over the live DB
+ * only once it is fully written. The live DB is NEVER unlinked first — so a failed
+ * dump/persist leaves the previously-valid index intact and the caller learns the
+ * re-index failed instead of being told success over a deleted file. rename() is
+ * atomic, so a concurrent reader sees either the old or the new DB, never a
+ * half-written one.
+ *
+ * Returns 0 on success; non-zero on failure (live DB untouched). */
+static int dump_and_persist(cbm_gbuf_t *gbuf, const char *db_path, const char *project,
+                            cbm_file_info_t *files, int file_count) {
     struct timespec t;
     cbm_clock_gettime(CLOCK_MONOTONIC, &t);
 
-    cbm_unlink(db_path);
+    char tmp[INCR_WAL_BUF];
+    char tmp_wal[INCR_WAL_BUF];
+    char tmp_shm[INCR_WAL_BUF];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", db_path);
+    snprintf(tmp_wal, sizeof(tmp_wal), "%s-wal", tmp);
+    snprintf(tmp_shm, sizeof(tmp_shm), "%s-shm", tmp);
+    /* Clear any stale temp left by a prior interrupted run. */
+    cbm_unlink(tmp);
+    cbm_unlink(tmp_wal);
+    cbm_unlink(tmp_shm);
+
+    int dump_rc = cbm_incremental_dump_fn(gbuf, tmp);
+    cbm_log_info("incremental.dump", "rc", itoa_buf(dump_rc), "elapsed_ms",
+                 itoa_buf((int)elapsed_ms(t)));
+    if (dump_rc != 0) {
+        cbm_log_error("incremental.err", "phase", "dump", "path", tmp);
+        cbm_unlink(tmp);
+        cbm_unlink(tmp_wal);
+        cbm_unlink(tmp_shm);
+        /* Return the POSITIVE persist error, not dump_rc (which is -1): a negative
+         * return would satisfy the pipeline dispatch's `rc >= 0` "incremental ran"
+         * test as false and fall through to the destructive full reindex, deleting
+         * the DB we just preserved. Surface as an error and keep the old DB. */
+        return CBM_ERR_PERSIST;
+    }
+
+    cbm_store_t *hash_store = cbm_store_open_path(tmp);
+    if (!hash_store) {
+        cbm_log_error("incremental.err", "phase", "open_tmp", "path", tmp);
+        cbm_unlink(tmp);
+        cbm_unlink(tmp_wal);
+        cbm_unlink(tmp_shm);
+        return CBM_ERR_PERSIST;
+    }
+    persist_hashes(hash_store, project, files, file_count);
+
+    /* FTS5 rebuild after the dump.  The btree dump path bypasses any triggers
+     * that could have kept nodes_fts synchronized, so we rebuild from the nodes
+     * table here.  See the full-dump path in pipeline.c for the matching logic. */
+    cbm_store_exec(hash_store, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
+    if (cbm_store_exec(hash_store,
+                       "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
+                       "SELECT id, cbm_camel_split(name), qualified_name, label, file_path "
+                       "FROM nodes;") != CBM_STORE_OK) {
+        cbm_store_exec(hash_store,
+                       "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
+                       "SELECT id, name, qualified_name, label, file_path FROM nodes;");
+    }
+    /* Fold any WAL back into the temp file before we swap it in, so the single
+     * renamed file is self-contained (its -wal/-shm won't ride along). No-op when
+     * journal_mode isn't WAL. */
+    cbm_store_exec(hash_store, "PRAGMA wal_checkpoint(TRUNCATE);");
+    cbm_store_close(hash_store);
+    cbm_unlink(tmp_wal);
+    cbm_unlink(tmp_shm);
+
+    /* Atomic swap — the only point the live DB is touched. */
+    if (cbm_rename(tmp, db_path) != 0) {
+        cbm_log_error("incremental.err", "phase", "rename", "from", tmp, "to", db_path);
+        cbm_unlink(tmp);
+        return CBM_ERR_PERSIST; /* live DB still intact */
+    }
+    /* The old WAL/SHM belonged to the pre-swap DB; drop them so they don't shadow
+     * the freshly-renamed file. */
     char wal[INCR_WAL_BUF];
     char shm[INCR_WAL_BUF];
     snprintf(wal, sizeof(wal), "%s-wal", db_path);
     snprintf(shm, sizeof(shm), "%s-shm", db_path);
     cbm_unlink(wal);
     cbm_unlink(shm);
-
-    int dump_rc = cbm_gbuf_dump_to_sqlite(gbuf, db_path);
-    cbm_log_info("incremental.dump", "rc", itoa_buf(dump_rc), "elapsed_ms",
-                 itoa_buf((int)elapsed_ms(t)));
-
-    cbm_store_t *hash_store = cbm_store_open_path(db_path);
-    if (hash_store) {
-        persist_hashes(hash_store, project, files, file_count);
-
-        /* FTS5 rebuild after incremental dump.  The btree dump path bypasses
-         * any triggers that could have kept nodes_fts synchronized, so we
-         * rebuild from the nodes table here.  See the full-dump path in
-         * pipeline.c for the matching logic. */
-        cbm_store_exec(hash_store, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
-        if (cbm_store_exec(hash_store,
-                           "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
-                           "SELECT id, cbm_camel_split(name), qualified_name, label, file_path "
-                           "FROM nodes;") != CBM_STORE_OK) {
-            cbm_store_exec(hash_store,
-                           "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
-                           "SELECT id, name, qualified_name, label, file_path FROM nodes;");
-        }
-
-        cbm_store_close(hash_store);
-    }
+    return 0;
 }
 
 /* ── Incremental pipeline entry point ────────────────────────────── */
@@ -424,10 +477,15 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
     free(changed_files);
     cbm_registry_free(registry);
 
-    /* Step 7: Dump to disk */
-    dump_and_persist(existing, db_path, project, files, file_count);
+    /* Step 7: Dump to disk (atomic; a failed persist preserves the prior DB and
+     * is surfaced as a non-zero return rather than a silent success — beads-tm8ib) */
+    int persist_rc = dump_and_persist(existing, db_path, project, files, file_count);
     cbm_gbuf_free(existing);
 
+    if (persist_rc != 0) {
+        cbm_log_error("incremental.err", "msg", "persist_failed", "rc", itoa_buf(persist_rc));
+        return persist_rc;
+    }
     cbm_log_info("incremental.done", "elapsed_ms", itoa_buf((int)elapsed_ms(t0)));
     return 0;
 }

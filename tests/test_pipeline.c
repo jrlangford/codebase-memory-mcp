@@ -5471,7 +5471,69 @@ TEST(project_name_trailing_slash) {
     PASS();
 }
 
+/* Test seam for beads-tm8ib: simulate an on-disk dump failure (e.g. ENOSPC). */
+static int tm8ib_fail_dump_stub(cbm_gbuf_t *gb, const char *path) {
+    (void)gb;
+    (void)path;
+    return -1;
+}
+
+TEST(incr_failed_persist_preserves_db) {
+    /* beads-tm8ib: a failed incremental persist must NOT destroy the prior valid
+     * index. Full-index a repo, then force the on-disk dump to fail on the next
+     * incremental re-index and assert (a) the pipeline surfaces the failure
+     * (non-zero rc) and (b) the original DB is still present and queryable.
+     * Pre-fix: dump_and_persist unlinked the DB first and swallowed the dump rc,
+     * so the DB was gone and cbm_pipeline_run reported success (rc==0). */
+    if (setup_test_repo() != 0) {
+        SKIP("failed to create temp dir");
+    }
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/tm8ib.db", g_tmpdir);
+
+    /* Full index → valid DB with a known node count. */
+    cbm_pipeline_t *p1 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FAST);
+    ASSERT_NOT_NULL(p1);
+    ASSERT_EQ(cbm_pipeline_run(p1), 0);
+    char project[256];
+    snprintf(project, sizeof(project), "%s", cbm_pipeline_project_name(p1));
+    cbm_store_t *s1 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s1);
+    int nodes_before = cbm_store_count_nodes(s1, project);
+    ASSERT_GT(nodes_before, 0);
+    cbm_store_close(s1);
+
+    /* Change a file so the next run takes the incremental path to persist. */
+    char main_go[512];
+    snprintf(main_go, sizeof(main_go), "%s/main.go", g_tmpdir);
+    th_append_file(main_go, "\nfunc AddedForTm8ib() {}\n");
+
+    /* Force the on-disk dump to fail during the incremental persist. */
+    cbm_incremental_dump_fn = tm8ib_fail_dump_stub;
+    cbm_pipeline_t *p2 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FAST);
+    ASSERT_NOT_NULL(p2);
+    int rc = cbm_pipeline_run(p2);
+    cbm_incremental_dump_fn = cbm_gbuf_dump_to_sqlite; /* restore before asserting */
+
+    /* (a) the failure is surfaced, not swallowed. */
+    ASSERT_NEQ(rc, 0);
+
+    /* (b) the prior valid DB survives and is still queryable. */
+    cbm_store_t *s2 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s2); /* pre-fix: DB was unlinked → open fails */
+    int nodes_after = cbm_store_count_nodes(s2, project);
+    ASSERT_EQ(nodes_after, nodes_before);
+    cbm_store_close(s2);
+
+    cbm_pipeline_free(p1);
+    cbm_pipeline_free(p2);
+    teardown_test_repo();
+    PASS();
+}
+
 SUITE(pipeline) {
+    /* Incremental persist atomicity (beads-tm8ib) */
+    RUN_TEST(incr_failed_persist_preserves_db);
     /* Index lock */
     RUN_TEST(pipeline_lock_try_acquire);
     RUN_TEST(pipeline_lock_blocking);

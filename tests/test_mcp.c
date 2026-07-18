@@ -1630,7 +1630,40 @@ TEST(mcp_server_run_rapid_messages) {
  *  SUITE
  * ══════════════════════════════════════════════════════════════════ */
 
+TEST(index_result_persist_failure_reports_error) {
+    /* beads-or4e7: when the pipeline reports success (rc==0) but the DB did not
+     * persist — resolve_store ran the integrity check and unlinked it, returning
+     * NULL — the tool result must be status="error" + isError, NOT a silent
+     * "indexed" over a deleted DB. store==NULL is exactly that integrity-delete
+     * state. Pre-fix this returned status="indexed" + isError=(rc!=0)=false. */
+    bool is_error = false;
+    char *json = cbm_mcp_build_index_result("proj", "/tmp/proj", 0, NULL, &is_error);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(is_error);
+    ASSERT_NOT_NULL(strstr(json, "\"status\":\"error\""));
+    ASSERT_NULL(strstr(json, "\"status\":\"indexed\""));
+    ASSERT_NOT_NULL(strstr(json, "did not persist"));
+    free(json);
+    PASS();
+}
+
+TEST(index_result_pipeline_failure_reports_error) {
+    /* rc!=0 (the pipeline itself failed) is an error regardless of store. */
+    bool is_error = false;
+    char *json = cbm_mcp_build_index_result("proj", "/tmp/proj", 1, NULL, &is_error);
+    ASSERT_NOT_NULL(json);
+    ASSERT_TRUE(is_error);
+    ASSERT_NOT_NULL(strstr(json, "\"status\":\"error\""));
+    free(json);
+    /* The rc==0 + valid-store "indexed" happy path is covered end-to-end by the
+     * pipeline/incremental integration tests (which assert status + node counts). */
+    PASS();
+}
+
 SUITE(mcp) {
+    /* index_repository result construction (beads-or4e7) */
+    RUN_TEST(index_result_persist_failure_reports_error);
+    RUN_TEST(index_result_pipeline_failure_reports_error);
     /* JSON-RPC parsing */
     RUN_TEST(jsonrpc_parse_request);
     RUN_TEST(jsonrpc_parse_notification);

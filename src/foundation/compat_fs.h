@@ -47,6 +47,11 @@ bool cbm_mkdir_p(const char *path, int mode);
 /* Delete a file. Returns 0 on success. */
 int cbm_unlink(const char *path);
 
+/* Atomically rename/replace a file (from -> to), overwriting an existing
+ * destination on the same filesystem. Returns 0 on success, non-zero on failure.
+ * POSIX: rename(). Windows: MoveFileEx with MOVEFILE_REPLACE_EXISTING. */
+int cbm_rename(const char *from, const char *to);
+
 /* Delete an empty directory. Returns 0 on success. */
 int cbm_rmdir(const char *path);
 
