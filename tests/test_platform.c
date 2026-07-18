@@ -1,8 +1,11 @@
 /*
  * test_platform.c — RED phase tests for foundation/platform.
  */
+#include "../src/foundation/compat.h"
 #include "test_framework.h"
+#include "test_helpers.h"
 #include "../src/foundation/platform.h"
+#include "../src/foundation/compat_fs.h"
 #include <unistd.h>
 
 TEST(platform_now_ns) {
@@ -68,8 +71,37 @@ TEST(platform_mmap_nonexistent) {
     PASS();
 }
 
+TEST(compat_rename_replaces_existing) {
+    /* cbm_rename must overwrite an existing destination and remove the source —
+     * the atomic swap the incremental persist relies on (beads-tm8ib). */
+    char *dir = th_mktempdir("cbm_rename");
+    ASSERT_NOT_NULL(dir);
+    char from[300];
+    char to[300];
+    snprintf(from, sizeof(from), "%s/from", dir);
+    snprintf(to, sizeof(to), "%s/to", dir);
+    ASSERT_EQ(th_write_file(from, "NEW"), 0);
+    ASSERT_EQ(th_write_file(to, "OLD"), 0);
+
+    ASSERT_EQ(cbm_rename(from, to), 0);
+    ASSERT_FALSE(cbm_file_exists(from)); /* source consumed */
+    ASSERT_TRUE(cbm_file_exists(to));
+
+    char buf[16] = {0};
+    FILE *fp = fopen(to, "r");
+    ASSERT_NOT_NULL(fp);
+    size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+    fclose(fp);
+    buf[n] = '\0';
+    ASSERT_STR_EQ(buf, "NEW"); /* destination now holds the source's content */
+
+    cbm_unlink(to);
+    PASS();
+}
+
 SUITE(platform) {
     RUN_TEST(platform_now_ns);
+    RUN_TEST(compat_rename_replaces_existing);
     RUN_TEST(platform_now_ms);
     RUN_TEST(platform_nprocs);
     RUN_TEST(platform_file_exists);

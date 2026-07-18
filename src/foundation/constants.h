@@ -64,8 +64,12 @@ enum { TS_LINE_OFFSET = 1 };
 
 /* ── Sentinel values ─────────────────────────────────────────── */
 enum {
-    CBM_NOT_FOUND = -1, /* search miss, invalid index */
-    CBM_INIT_DONE = 1,  /* initialization flag */
+    CBM_NOT_FOUND = -1,  /* search miss, invalid index */
+    CBM_INIT_DONE = 1,   /* initialization flag */
+    CBM_ERR_PERSIST = 2, /* incremental persist failed; positive on purpose so the
+                          * pipeline dispatch (rc >= 0 means "incremental ran")
+                          * surfaces it as an error instead of falling back to a
+                          * destructive full reindex — beads-tm8ib */
 };
 
 /* ── Time conversion factors ─────────────────────────────────── */
