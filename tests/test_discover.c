@@ -284,6 +284,87 @@ TEST(discover_simple) {
     PASS();
 }
 
+/* beads-gwfeg: a large .sql bulk-data dump must be skipped (it has ~zero graph
+ * value and hangs the tree-sitter extractor, which silently drops the whole
+ * project to CBM_UNAVAILABLE). A small schema.sql must still be indexed.
+ * Fails pre-fix (no size cap → the 512KB+ dump is discovered and parsed). */
+TEST(discover_skips_large_sql_data_dump) {
+    char *base = th_mktempdir("cbm_disc_bigsql");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, "resources/db/schema.sql"), "CREATE TABLE t (id INT);\n");
+
+    size_t big = (size_t)CBM_DATA_FILE_MAX_SIZE + 4096;
+    char *buf = malloc(big + 1);
+    ASSERT(buf != NULL);
+    memset(buf, 'x', big);
+    buf[big] = '\0';
+    th_write_file(TH_PATH(base, "resources/db/test_historic_data.sql"), buf);
+    free(buf);
+
+    cbm_discover_opts_t opts = {0}; /* data cap is independent of opts.max_file_size */
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found_big_sql = false, found_schema = false, found_go = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "test_historic_data.sql"))
+            found_big_sql = true;
+        if (strstr(files[i].rel_path, "schema.sql"))
+            found_schema = true;
+        if (files[i].language == CBM_LANG_GO)
+            found_go = true;
+    }
+    ASSERT_TRUE(!found_big_sql); /* the 512KB+ dump is skipped (the gwfeg fix) */
+    ASSERT_TRUE(found_schema);   /* small schema.sql still indexed */
+    ASSERT_TRUE(found_go);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+/* beads-gwfeg: the general max_file_size backstop (set in cbm_pipeline_run)
+ * skips any oversized file regardless of extension. Fails pre-fix (default was 0
+ * = no limit). */
+TEST(discover_skips_oversized_file_general_cap) {
+    char *base = th_mktempdir("cbm_disc_bigfile");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+
+    size_t big = (size_t)CBM_DEFAULT_MAX_FILE_SIZE + 4096;
+    char *buf = malloc(big + 1);
+    ASSERT(buf != NULL);
+    memset(buf, ' ', big);
+    buf[big] = '\0';
+    th_write_file(TH_PATH(base, "generated/huge.go"), buf);
+    free(buf);
+
+    cbm_discover_opts_t opts = {.max_file_size = CBM_DEFAULT_MAX_FILE_SIZE}; /* prod value */
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+
+    bool found_huge = false, found_main = false;
+    for (int i = 0; i < count; i++) {
+        if (strstr(files[i].rel_path, "huge.go"))
+            found_huge = true;
+        if (strstr(files[i].rel_path, "main.go"))
+            found_main = true;
+    }
+    ASSERT_TRUE(!found_huge); /* >2MB skipped by the general backstop */
+    ASSERT_TRUE(found_main);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
 TEST(discover_skips_git_dir) {
     char *base = th_mktempdir("cbm_disc_git");
     ASSERT(base != NULL);
@@ -946,4 +1027,8 @@ SUITE(discover) {
     RUN_TEST(discover_keeps_docs_behaviour_nested);
     RUN_TEST(discover_skips_non_behaviour_children_of_docs_in_moderate);
     RUN_TEST(discover_keeps_all_docs_in_full_mode);
+
+    /* File-size caps (beads-gwfeg) */
+    RUN_TEST(discover_skips_large_sql_data_dump);
+    RUN_TEST(discover_skips_oversized_file_general_cap);
 }

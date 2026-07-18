@@ -97,6 +97,14 @@ typedef struct {
     int64_t size;         /* file size in bytes */
 } cbm_file_info_t;
 
+/* File-size caps for extraction (beads-gwfeg). A large data-dump file (e.g. a
+ * multi-MB .sql) has ~zero graph value and hangs the tree-sitter extractor, so
+ * the index never persists and the project silently falls back to
+ * CBM_UNAVAILABLE. DATA_FILE cap is aggressive for bulk-data extensions;
+ * DEFAULT_MAX is a general backstop for any oversized file in any repo. */
+#define CBM_DATA_FILE_MAX_SIZE ((int64_t)512 * 1024)      /* 512 KB */
+#define CBM_DEFAULT_MAX_FILE_SIZE ((int64_t)2 * 1024 * 1024) /* 2 MB */
+
 typedef struct {
     cbm_index_mode_t mode;   /* CBM_MODE_FULL or CBM_MODE_FAST */
     const char *ignore_file; /* path to .cbmignore file, or NULL */

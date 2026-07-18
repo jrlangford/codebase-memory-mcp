@@ -798,9 +798,15 @@ static int collect_db_project_names(const char *dir_path, char *out, size_t out_
             out[offset++] = ',';
         }
         int wrote = snprintf(out + offset, out_sz - (size_t)offset, "\"%.*s\"", (int)(len - 3), n);
-        if (wrote > 0) {
-            offset += wrote;
+        /* snprintf returns the would-have-written length; if it meets/exceeds the
+         * remaining buffer the write was truncated. Stop here — an unclamped
+         * offset += wrote overruns out_sz and the next iter's
+         * out_sz - (size_t)offset underflows to a huge size_t → OOB write
+         * (beads-8svz). */
+        if (wrote < 0 || (size_t)wrote >= out_sz - (size_t)offset) {
+            break;
         }
+        offset += wrote;
         count++;
     }
     cbm_closedir(d);
